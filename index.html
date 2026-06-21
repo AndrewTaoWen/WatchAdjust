@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WatchAdjust — Complication Setup Guide</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="app">
+      <header class="header">
+        <div class="brand">
+          <span class="brand-mark">◷</span>
+          <h1>WatchAdjust</h1>
+        </div>
+        <p class="tagline">Set your complications to the correct position</p>
+      </header>
+
+      <main class="layout">
+        <section class="viewport" aria-label="3D watch preview">
+          <canvas id="watch-canvas"></canvas>
+          <div class="viewport-hint">Drag to rotate · Scroll to zoom</div>
+        </section>
+
+        <aside class="panel" aria-label="Adjustment controls">
+          <div class="panel-section">
+            <label class="field-label" for="complication-type">Complication</label>
+            <select id="complication-type" class="select">
+              <option value="moon-phase">Moon Phase</option>
+              <option value="annual-calendar">Annual Calendar</option>
+              <option value="perpetual-calendar">Perpetual Calendar</option>
+              <option value="day-date">Day-Date</option>
+              <option value="complete-calendar">Complete Calendar</option>
+            </select>
+          </div>
+
+          <div class="panel-section">
+            <label class="field-label" for="target-date">Target date &amp; time</label>
+            <input type="datetime-local" id="target-date" class="input" />
+            <button type="button" id="use-now" class="btn-secondary">Use current time</button>
+          </div>
+
+          <div class="panel-section">
+            <label class="field-label" for="timezone">Timezone</label>
+            <div class="field-row">
+              <select id="timezone" class="select field-row-main"></select>
+              <button type="button" id="locate-me" class="btn-secondary btn-locate">Locate me</button>
+            </div>
+            <p id="location-status" class="field-hint" aria-live="polite"></p>
+          </div>
+
+          <div id="instructions" class="instructions" role="region" aria-live="polite"></div>
+        </aside>
+      </main>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
