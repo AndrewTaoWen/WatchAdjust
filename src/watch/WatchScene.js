@@ -1,10 +1,42 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
-const MOON_Y = -0.55;
-const MOON_R = 0.19;
+const MOON_Y = -0.58;
+const MOON_R = 0.25;
 const DAY_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const MONTH_LABELS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+// Palette — steel case, cream "opaline" dial, navy print. Legible for anyone.
+const COLORS = {
+  case: 0xc8ccd2,
+  bezel: 0xdfe2e6,
+  dial: 0xe9e0cc,
+  print: 0x1c2a44,
+  hands: 0x1c2a44,
+  seconds: 0xc2410c,
+  windowBg: 0xfbfaf6,
+  windowText: '#1c2a44',
+  moonFrame: 0xc8ccd2,
+  focus: 0x0d9488,
+};
+
+const HOME_DIRECTION = new THREE.Vector3(0, 2.4, 4.2).normalize();
+const WATCH_RADIUS = 1.8; // case + crown, used to fit the camera
+
+// Where each settable part sits on the dial (watch-local coordinates).
+const PARTS = {
+  crown: { shape: 'ring', x: 1.68, y: 0, r: 0.2 },
+  hands: { shape: 'ring', x: 0, y: 0, r: 0.16 },
+  moon: { shape: 'ring', x: 0, y: MOON_Y, r: MOON_R * 1.28 },
+  day: { shape: 'frame', x: 0, y: 0.69, w: 0.78, h: 0.19 },
+  date: { shape: 'frame', x: 0, y: 0.55, w: 0.78, h: 0.19 },
+  dayDate: { shape: 'frame', x: 0, y: 0.62, w: 0.8, h: 0.36 },
+  month: { shape: 'frame', x: 0.75, y: 0, w: 0.55, h: 0.28 },
+  year: { shape: 'frame', x: -0.75, y: 0, w: 0.6, h: 0.28 },
+};
+
+const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 
 export class WatchScene {
   constructor(canvas) {
@@ -12,19 +44,9 @@ export class WatchScene {
     this.clock = new THREE.Clock();
     this.targetDate = new Date();
     this.sceneState = {};
-    this.moonDisc = null;
-    this.hourHand = null;
-    this.minuteHand = null;
-    this.secondHand = null;
-    this.dayLabel = null;
-    this.dateLabel = null;
-    this.monthLabel = null;
-    this.yearLabel = null;
-    this.moonGroup = null;
-    this.moonHoleCover = null;
-    this.dayDateGroup = null;
-    this.monthGroup = null;
-    this.yearGroup = null;
+    this.cameraGoal = null;
+    this.highlightedPart = null;
+    this.homeDistance = 6;
 
     this.init();
   }
@@ -34,222 +56,276 @@ export class WatchScene {
       canvas: this.canvas,
       antialias: true,
       alpha: true,
-      logarithmicDepthBuffer: true,
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setSize(this.canvas.clientWidth, this.canvas.clientHeight);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.1;
-    this.renderer.sortObjects = true;
+    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.setClearColor(0x000000, 0);
 
+    // Transparent background — the page's CSS gradient shows through, so the
+    // scene follows the light/dark theme automatically.
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0a0a0c);
+    // Soft studio reflections so polished steel reads as metal, not grey plastic.
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    this.scene.environmentIntensity = 0.8;
+    pmrem.dispose();
 
-    this.camera = new THREE.PerspectiveCamera(
-      35,
-      this.canvas.clientWidth / this.canvas.clientHeight,
-      0.1,
-      100,
-    );
-    this.camera.position.set(0, 2.8, 4.2);
+    this.camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
 
     this.controls = new OrbitControls(this.camera, this.canvas);
     this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.06;
-    this.controls.minDistance = 2.5;
-    this.controls.maxDistance = 8;
-    this.controls.maxPolarAngle = Math.PI / 1.8;
-    this.controls.target.set(0, 0, 0);
+    this.controls.dampingFactor = 0.08;
+    this.controls.enablePan = false;
+    // Keep the dial facing the viewer so nobody gets lost behind the watch.
+    this.controls.minAzimuthAngle = -0.9;
+    this.controls.maxAzimuthAngle = 0.9;
+    this.controls.minPolarAngle = 0.3;
+    this.controls.maxPolarAngle = 1.45;
+    this.controls.addEventListener('start', () => {
+      this.cameraGoal = null;
+    });
 
     this.setupLights();
     this.buildWatch();
+
+    this.resizeObserver = new ResizeObserver(() => this.onResize());
+    this.resizeObserver.observe(this.canvas);
+    this.onResize();
+    this.camera.position.copy(HOME_DIRECTION).multiplyScalar(this.homeDistance);
+
     this.animate = this.animate.bind(this);
     requestAnimationFrame(this.animate);
-    window.addEventListener('resize', () => this.onResize());
   }
 
   setupLights() {
-    const ambient = new THREE.AmbientLight(0xfff5e6, 0.35);
-    this.scene.add(ambient);
+    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x404858, 0.5));
 
-    const key = new THREE.DirectionalLight(0xffffff, 1.4);
+    const key = new THREE.DirectionalLight(0xffffff, 1.2);
     key.position.set(3, 5, 4);
     this.scene.add(key);
 
-    const fill = new THREE.DirectionalLight(0xc4d4ff, 0.45);
-    fill.position.set(-4, 2, -2);
+    const fill = new THREE.DirectionalLight(0xcfe0ff, 0.4);
+    fill.position.set(-4, 2, 3);
     this.scene.add(fill);
-
-    const rim = new THREE.PointLight(0xffd699, 0.25, 12);
-    rim.position.set(0, 1.5, 3);
-    this.scene.add(rim);
   }
 
   buildWatch() {
     const watch = new THREE.Group();
     this.watchGroup = watch;
 
-    // Case
-    const caseGeo = new THREE.CylinderGeometry(1.55, 1.55, 0.28, 64);
     const caseMat = new THREE.MeshStandardMaterial({
-      color: 0xc9a962,
-      metalness: 0.92,
-      roughness: 0.18,
+      color: COLORS.case,
+      metalness: 0.9,
+      roughness: 0.28,
     });
-    const caseMesh = new THREE.Mesh(caseGeo, caseMat);
+
+    // Case
+    const caseMesh = new THREE.Mesh(new THREE.CylinderGeometry(1.55, 1.55, 0.28, 64), caseMat);
     caseMesh.rotation.x = Math.PI / 2;
     watch.add(caseMesh);
 
     // Bezel
-    const bezelGeo = new THREE.TorusGeometry(1.52, 0.06, 16, 64);
-    const bezelMat = new THREE.MeshStandardMaterial({
-      color: 0xd4af5a,
-      metalness: 0.95,
-      roughness: 0.12,
-    });
-    const bezel = new THREE.Mesh(bezelGeo, bezelMat);
+    const bezel = new THREE.Mesh(
+      new THREE.TorusGeometry(1.52, 0.06, 16, 64),
+      new THREE.MeshStandardMaterial({ color: COLORS.bezel, metalness: 0.95, roughness: 0.15 }),
+    );
     bezel.position.z = 0.12;
     watch.add(bezel);
 
     // Dial
-    const dialGeo = new THREE.CircleGeometry(1.38, 64);
-    const dialMat = new THREE.MeshStandardMaterial({
-      color: 0x1a1814,
-      metalness: 0.15,
-      roughness: 0.85,
-    });
-    const dial = new THREE.Mesh(dialGeo, dialMat);
-    dial.position.z = 0.13;
+    const dial = new THREE.Mesh(
+      new THREE.CircleGeometry(1.46, 64),
+      new THREE.MeshStandardMaterial({ color: COLORS.dial, metalness: 0, roughness: 0.7 }),
+    );
+    dial.position.z = 0.142;
     dial.renderOrder = 1;
     watch.add(dial);
 
     // Cover moon sub-dial when complication is hidden
-    this.moonHoleCover = this.createMoonHoleCover();
+    this.moonHoleCover = new THREE.Mesh(
+      new THREE.CircleGeometry(MOON_R * 1.08, 48),
+      new THREE.MeshStandardMaterial({ color: COLORS.dial, metalness: 0, roughness: 0.7 }),
+    );
+    this.moonHoleCover.position.set(0, MOON_Y, 0.158);
+    this.moonHoleCover.renderOrder = 3;
+    this.moonHoleCover.visible = false;
     watch.add(this.moonHoleCover);
 
     // Hour markers
+    const markerMat = new THREE.MeshStandardMaterial({ color: COLORS.print, metalness: 0.4, roughness: 0.4 });
     for (let i = 0; i < 12; i++) {
       const angle = (i / 12) * Math.PI * 2 - Math.PI / 2;
+      const major = i % 3 === 0;
       const marker = new THREE.Mesh(
-        new THREE.BoxGeometry(i % 3 === 0 ? 0.06 : 0.03, i % 3 === 0 ? 0.22 : 0.14, 0.02),
-        new THREE.MeshStandardMaterial({ color: 0xd4c5a0, metalness: 0.8, roughness: 0.3 }),
+        new THREE.BoxGeometry(major ? 0.07 : 0.035, major ? 0.24 : 0.15, 0.02),
+        markerMat,
       );
-      marker.position.set(Math.cos(angle) * 1.15, Math.sin(angle) * 1.15, 0.155);
+      marker.position.set(Math.cos(angle) * 1.2, Math.sin(angle) * 1.2, 0.15);
       marker.rotation.z = angle + Math.PI / 2;
       marker.renderOrder = 2;
       watch.add(marker);
     }
 
-    // Hands pivot
+    // Hands
     const pivot = new THREE.Group();
     pivot.position.z = 0.19;
     watch.add(pivot);
 
-    this.hourHand = this.createHand(0.55, 0.045, 0xd4c5a0, 4);
-    this.minuteHand = this.createHand(0.82, 0.032, 0xe8dcc8, 5);
-    this.secondHand = this.createHand(0.9, 0.012, 0xc9a962, 6);
+    this.hourHand = this.createHand(0.58, 0.055, COLORS.hands, 4);
+    this.minuteHand = this.createHand(0.9, 0.038, COLORS.hands, 5);
+    this.secondHand = this.createHand(1.0, 0.014, COLORS.seconds, 6);
+    this.hourHand.position.z = 0;
+    this.minuteHand.position.z = 0.008;
+    this.secondHand.position.z = 0.016;
+    pivot.add(this.hourHand, this.minuteHand, this.secondHand);
 
-    pivot.add(this.hourHand);
-    pivot.add(this.minuteHand);
-    pivot.add(this.secondHand);
-
-    // Center cap
     const cap = new THREE.Mesh(
       new THREE.CylinderGeometry(0.05, 0.05, 0.04, 32),
-      caseMat,
+      new THREE.MeshStandardMaterial({ color: COLORS.seconds, metalness: 0.6, roughness: 0.3 }),
     );
     cap.rotation.x = Math.PI / 2;
-    cap.position.z = 0.205;
+    cap.position.z = 0.215;
     cap.renderOrder = 7;
     watch.add(cap);
 
-    // Moon phase — disk behind dial, gold frame above
     this.moonGroup = this.buildMoonPhase();
-    this.moonGroup.position.set(0, MOON_Y, 0.152);
+    this.moonGroup.position.set(0, MOON_Y, 0.154);
     watch.add(this.moonGroup);
 
-    // Day-date at 12 o'clock
     this.dayDateGroup = this.buildDayDate();
-    this.dayDateGroup.position.set(0, 0.62, 0.165);
+    this.dayDateGroup.position.set(0, 0.62, 0.158);
     watch.add(this.dayDateGroup);
 
-    // Month at 3 o'clock
-    this.monthGroup = this.buildMonthWindow();
-    this.monthGroup.position.set(0.75, 0, 0.165);
+    this.monthGroup = this.buildLabelWindow(0.48, 0.21, 'JAN', 0.19);
+    this.monthLabel = this.monthGroup.userData.label;
+    this.monthGroup.position.set(0.75, 0, 0.158);
     watch.add(this.monthGroup);
 
-    // Year at 9 o'clock
-    this.yearGroup = this.buildYearWindow();
-    this.yearGroup.position.set(-0.75, 0, 0.165);
+    this.yearGroup = this.buildLabelWindow(0.53, 0.21, '2026', 0.17);
+    this.yearLabel = this.yearGroup.userData.label;
+    this.yearGroup.position.set(-0.75, 0, 0.158);
     watch.add(this.yearGroup);
 
     // Crown
-    const crown = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.1, 0.1, 0.18, 24),
-      caseMat,
-    );
+    const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.2, 24), caseMat);
     crown.rotation.z = Math.PI / 2;
-    crown.position.set(1.65, 0, 0);
+    crown.position.set(1.66, 0, 0);
     watch.add(crown);
 
-    // Crystal dome
+    // Crystal
     const crystal = new THREE.Mesh(
-      new THREE.SphereGeometry(1.42, 64, 32, 0, Math.PI * 2, 0, Math.PI / 2.2),
+      new THREE.SphereGeometry(1.46, 64, 32, 0, Math.PI * 2, 0, Math.PI / 2.4),
       new THREE.MeshPhysicalMaterial({
         color: 0xffffff,
-        metalness: 0,
         roughness: 0.05,
-        transmission: 0.85,
-        thickness: 0.2,
-        ior: 1.45,
         transparent: true,
-        opacity: 0.12,
+        opacity: 0.06,
         depthWrite: false,
       }),
     );
     crystal.rotation.x = -Math.PI / 2;
-    crystal.position.z = 0.22;
+    crystal.scale.z = 0.25;
+    crystal.position.z = 0.2;
     crystal.renderOrder = 20;
     watch.add(crystal);
 
-    watch.rotation.x = -0.35;
+    this.highlight = this.buildHighlight();
+    watch.add(this.highlight);
+
+    watch.rotation.x = -0.3;
     this.scene.add(watch);
   }
 
   createHand(length, width, color, renderOrder = 4) {
     const geo = new THREE.BoxGeometry(width, length, 0.012);
-    geo.translate(0, length / 2, 0);
+    geo.translate(0, length / 2 - 0.08, 0);
     const mesh = new THREE.Mesh(
       geo,
-      new THREE.MeshStandardMaterial({ color, metalness: 0.85, roughness: 0.25 }),
+      new THREE.MeshStandardMaterial({ color, metalness: 0.5, roughness: 0.35 }),
     );
     mesh.renderOrder = renderOrder;
     return mesh;
   }
 
-  createMoonHoleCover() {
-    const mesh = new THREE.Mesh(
-      new THREE.CircleGeometry(MOON_R, 48),
-      new THREE.MeshBasicMaterial({ color: 0x1a1814 }),
+  /** Pulsing outline drawn on top of whatever part the user is setting. */
+  buildHighlight() {
+    const group = new THREE.Group();
+    group.visible = false;
+    group.renderOrder = 30;
+    const mat = new THREE.MeshBasicMaterial({
+      color: COLORS.focus,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    this.highlightMaterial = mat;
+    this.highlightMesh = new THREE.Mesh(new THREE.BufferGeometry(), mat);
+    this.highlightMesh.renderOrder = 30;
+    group.add(this.highlightMesh);
+    group.position.z = 0.24;
+    return group;
+  }
+
+  highlightPart(part) {
+    if (part === this.highlightedPart) return;
+    this.highlightedPart = part;
+    const cfg = PARTS[part];
+
+    const handGlow = part === 'hands' ? COLORS.focus : 0x000000;
+    [this.hourHand, this.minuteHand].forEach((h) => h.material.emissive.setHex(handGlow));
+
+    if (!cfg) {
+      this.highlight.visible = false;
+      this.resetView();
+      return;
+    }
+
+    this.highlightMesh.geometry.dispose();
+    this.highlightMesh.geometry =
+      cfg.shape === 'ring'
+        ? new THREE.RingGeometry(cfg.r, cfg.r + 0.035, 64)
+        : frameGeometry(cfg.w, cfg.h, 0.03);
+    this.highlight.position.x = cfg.x;
+    this.highlight.position.y = cfg.y;
+    this.highlight.visible = true;
+
+    if (part === 'hands') {
+      this.resetView();
+    } else {
+      this.focusOn(cfg.x, cfg.y);
+    }
+  }
+
+  focusOn(x, y) {
+    const world = new THREE.Vector3(x, y, 0.2);
+    this.watchGroup.localToWorld(world);
+    const target = world.multiplyScalar(0.55);
+    const position = HOME_DIRECTION.clone().multiplyScalar(this.homeDistance * 0.75).add(target);
+    this.setCameraGoal(position, target);
+  }
+
+  resetView() {
+    this.setCameraGoal(
+      HOME_DIRECTION.clone().multiplyScalar(this.homeDistance),
+      new THREE.Vector3(0, 0, 0),
     );
-    mesh.position.set(0, MOON_Y, 0.153);
-    mesh.renderOrder = 3;
-    mesh.visible = false;
-    return mesh;
+  }
+
+  setCameraGoal(position, target) {
+    if (reducedMotion) {
+      this.camera.position.copy(position);
+      this.controls.target.copy(target);
+      this.cameraGoal = null;
+      return;
+    }
+    this.cameraGoal = { position, target };
   }
 
   buildMoonPhase() {
     const group = new THREE.Group();
     group.renderOrder = 3;
-
-    // Recessed pocket ring
-    const pocket = new THREE.Mesh(
-      new THREE.RingGeometry(MOON_R * 0.98, MOON_R * 1.02, 64),
-      new THREE.MeshBasicMaterial({ color: 0x0a0908 }),
-    );
-    pocket.position.z = -0.001;
-    pocket.renderOrder = 2;
-    group.add(pocket);
 
     const { texture, canvas, ctx } = this.createMoonDisplayTexture(0);
     const disk = new THREE.Mesh(
@@ -258,14 +334,12 @@ export class WatchScene {
     );
     disk.renderOrder = 3;
     this.moonDisc = disk;
-    disk.userData.canvas = canvas;
-    disk.userData.ctx = ctx;
-    disk.userData.texture = texture;
+    disk.userData = { canvas, ctx, texture };
     group.add(disk);
 
     const frame = new THREE.Mesh(
-      new THREE.RingGeometry(MOON_R * 0.94, MOON_R * 1.06, 64),
-      new THREE.MeshBasicMaterial({ color: 0xc9a962 }),
+      new THREE.RingGeometry(MOON_R * 0.94, MOON_R * 1.08, 64),
+      new THREE.MeshStandardMaterial({ color: COLORS.moonFrame, metalness: 0.9, roughness: 0.25 }),
     );
     frame.position.z = 0.004;
     frame.renderOrder = 4;
@@ -280,9 +354,10 @@ export class WatchScene {
     canvas.width = size;
     canvas.height = size;
     const ctx = canvas.getContext('2d');
-    this.drawMoonDisplay(ctx, size / 2, size / 2, size * 0.46, phase);
+    this.drawMoonDisplay(ctx, size / 2, size / 2, size * 0.5, phase);
 
     const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
     texture.minFilter = THREE.LinearFilter;
     texture.magFilter = THREE.LinearFilter;
     texture.generateMipmaps = false;
@@ -305,57 +380,61 @@ export class WatchScene {
     ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
 
     this.drawStarField(ctx, cx, cy, r);
-    this.drawAccurateMoon(ctx, cx, cy, r * 0.82, phase);
+
+    // Unlit side, faintly visible (earthshine) so the whole moon reads as a disc.
+    ctx.fillStyle = 'rgba(120, 140, 170, 0.14)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 0.84, 0, Math.PI * 2);
+    ctx.fill();
+
+    this.drawAccurateMoon(ctx, cx, cy, r * 0.84, phase);
     ctx.restore();
   }
 
   drawAccurateMoon(ctx, cx, cy, radius, phase) {
     phase = ((phase % 1) + 1) % 1;
-
-    if (phase < 0.008 || phase > 0.992) return;
+    if (phase < 0.01 || phase > 0.99) return;
 
     ctx.save();
     this.traceLitMoonLobe(ctx, cx, cy, radius, phase);
-    const waxing = phase <= 0.5;
-    const p = waxing ? phase * 2 : (1 - phase) * 2;
-    if (p > 1 && Math.abs(phase - 0.5) >= 0.008) {
-      ctx.clip('evenodd');
-    } else {
-      ctx.clip();
-    }
+    ctx.clip();
     this.drawLunarSurface(ctx, cx, cy, radius);
     ctx.restore();
   }
 
-  /** Curved terminator — lit portion of the lunar disc. */
+  /**
+   * Lit portion of the lunar disc, as seen from the northern hemisphere:
+   * a half-circle limb on the sunlit side, closed by the terminator — an
+   * ellipse whose half-width is r·|cos(2π·phase)|. The terminator bulges
+   * toward the lit limb for a crescent and away from it for a gibbous moon.
+   */
   traceLitMoonLobe(ctx, cx, cy, radius, phase) {
-    phase = ((phase % 1) + 1) % 1;
-
-    if (Math.abs(phase - 0.5) < 0.008) {
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-      return;
-    }
-
-    const waxing = phase <= 0.5;
-    const p = waxing ? phase * 2 : (1 - phase) * 2;
+    const waxing = phase < 0.5;
+    const rx = radius * Math.abs(Math.cos(phase * Math.PI * 2));
+    const crescent = phase < 0.25 || phase > 0.75;
+    const top = -Math.PI / 2;
+    const bottom = Math.PI / 2;
 
     ctx.beginPath();
-    if (p <= 1) {
-      const theta = Math.acos(Math.max(-1, Math.min(1, 1 - p)));
-      const innerR = radius * Math.sin(theta);
-      const innerX = cx + (waxing ? 1 : -1) * radius * Math.cos(theta);
-      ctx.arc(cx, cy, radius, -Math.PI / 2, Math.PI / 2, waxing);
-      ctx.arc(innerX, cy, innerR, Math.PI / 2, -Math.PI / 2, !waxing);
-      ctx.closePath();
+    if (waxing) {
+      // Right limb: top → right → bottom
+      ctx.arc(cx, cy, radius, top, bottom, false);
+      if (crescent) ctx.ellipse(cx, cy, rx, radius, 0, bottom, top, true);
+      else ctx.ellipse(cx, cy, rx, radius, 0, bottom, top + Math.PI * 2, false);
     } else {
-      const p2 = p - 1;
-      const theta = Math.acos(Math.max(-1, Math.min(1, 1 - p2)));
-      const innerR = radius * Math.sin(theta);
-      const innerX = cx + (waxing ? -1 : 1) * radius * Math.cos(theta);
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-      ctx.arc(innerX, cy, innerR, Math.PI / 2, -Math.PI / 2, waxing);
+      // Left limb: bottom → left → top
+      ctx.arc(cx, cy, radius, bottom, top + Math.PI * 2, false);
+      if (crescent) ctx.ellipse(cx, cy, rx, radius, 0, top + Math.PI * 2, bottom, true);
+      else ctx.ellipse(cx, cy, rx, radius, 0, top, bottom, false);
     }
+    ctx.closePath();
+  }
+
+  updateMoonPhase(phase) {
+    if (!this.moonDisc) return;
+    const { canvas, ctx, texture } = this.moonDisc.userData;
+    this.drawMoonDisplay(ctx, canvas.width / 2, canvas.height / 2, canvas.width * 0.5, phase);
+    texture.needsUpdate = true;
   }
 
   drawLunarSurface(ctx, cx, cy, r) {
@@ -431,13 +510,6 @@ export class WatchScene {
     ctx.fill();
   }
 
-  updateMoonPhase(phase) {
-    if (!this.moonDisc) return;
-    const { canvas, ctx, texture } = this.moonDisc.userData;
-    this.drawMoonDisplay(ctx, canvas.width / 2, canvas.height / 2, canvas.width * 0.46, phase);
-    texture.needsUpdate = true;
-  }
-
   drawStarField(ctx, cx, cy, radius) {
     // Subtle stars only — keep the moon readable
     const stars = [
@@ -474,52 +546,43 @@ export class WatchScene {
   }
 
   buildDayDate() {
-    const group = new THREE.Group();
-    group.renderOrder = 3;
-
-    const bg = this.createWindowPlane(0.7, 0.28);
-    group.add(bg);
-
-    this.dayLabel = this.createTextSprite('MON', 0.22);
-    this.dayLabel.position.set(0, 0.06, 0.01);
+    const group = this.buildLabelWindow(0.72, 0.3, '', 0);
+    this.dayLabel = this.createTextSprite('MON', 0.17);
+    this.dayLabel.position.set(0, 0.07, 0.01);
     group.add(this.dayLabel);
 
-    this.dateLabel = this.createTextSprite('21', 0.32);
-    this.dateLabel.position.set(0, -0.08, 0.01);
+    this.dateLabel = this.createTextSprite('21', 0.2);
+    this.dateLabel.position.set(0, -0.07, 0.01);
     group.add(this.dateLabel);
-
     return group;
   }
 
-  buildMonthWindow() {
+  buildLabelWindow(width, height, text, scale) {
     const group = new THREE.Group();
     group.renderOrder = 3;
-    const bg = this.createWindowPlane(0.45, 0.2);
-    group.add(bg);
-    this.monthLabel = this.createTextSprite('JUN', 0.2);
-    this.monthLabel.position.z = 0.01;
-    group.add(this.monthLabel);
-    return group;
-  }
 
-  buildYearWindow() {
-    const group = new THREE.Group();
-    group.renderOrder = 3;
-    const bg = this.createWindowPlane(0.5, 0.2);
-    group.add(bg);
-    this.yearLabel = this.createTextSprite('2026', 0.18);
-    this.yearLabel.position.z = 0.01;
-    group.add(this.yearLabel);
-    return group;
-  }
-
-  createWindowPlane(width, height) {
-    const mesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(width, height),
-      new THREE.MeshBasicMaterial({ color: 0x0d0d0d }),
+    const border = new THREE.Mesh(
+      new THREE.PlaneGeometry(width + 0.04, height + 0.04),
+      new THREE.MeshStandardMaterial({ color: COLORS.case, metalness: 0.9, roughness: 0.3 }),
     );
-    mesh.renderOrder = 3;
-    return mesh;
+    border.position.z = -0.002;
+    border.renderOrder = 3;
+    group.add(border);
+
+    const bg = new THREE.Mesh(
+      new THREE.PlaneGeometry(width, height),
+      new THREE.MeshBasicMaterial({ color: COLORS.windowBg }),
+    );
+    bg.renderOrder = 3;
+    group.add(bg);
+
+    if (text) {
+      const label = this.createTextSprite(text, scale);
+      label.position.z = 0.01;
+      group.add(label);
+      group.userData.label = label;
+    }
+    return group;
   }
 
   createTextSprite(text, scale = 0.25) {
@@ -527,24 +590,16 @@ export class WatchScene {
     canvas.width = 256;
     canvas.height = 128;
     const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#d4c5a0';
-    ctx.font = '600 52px "DM Sans", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, 128, 64);
 
     const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
     texture.minFilter = THREE.LinearFilter;
-    const mat = new THREE.SpriteMaterial({ map: texture, transparent: true });
+    const mat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
     const sprite = new THREE.Sprite(mat);
-    sprite.scale.set(scale * 2.2, scale, 1);
+    sprite.scale.set(scale * 2, scale, 1);
     sprite.renderOrder = 4;
-    mat.depthTest = true;
-    mat.depthWrite = false;
-    sprite.userData.text = text;
-    sprite.userData.canvas = canvas;
-    sprite.userData.ctx = ctx;
-    sprite.userData.texture = texture;
+    sprite.userData = { text: null, canvas, ctx, texture };
+    this.updateTextSprite(sprite, text);
     return sprite;
   }
 
@@ -552,11 +607,11 @@ export class WatchScene {
     if (sprite.userData.text === text) return;
     const { canvas, ctx, texture } = sprite.userData;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#d4c5a0';
-    ctx.font = '600 52px "DM Sans", sans-serif';
+    ctx.fillStyle = COLORS.windowText;
+    ctx.font = '700 84px "DM Sans", system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(text, 128, 64);
+    ctx.fillText(text, 128, 68, 244);
     texture.needsUpdate = true;
     sprite.userData.text = text;
   }
@@ -580,18 +635,21 @@ export class WatchScene {
       year = new Date().getFullYear(),
     } = state;
 
-    if (this.moonGroup) this.moonGroup.visible = showMoon;
-    if (this.moonHoleCover) this.moonHoleCover.visible = !showMoon;
-    if (this.dayDateGroup) this.dayDateGroup.visible = showDayDate;
-    if (this.monthGroup) this.monthGroup.visible = showMonth;
-    if (this.yearGroup) this.yearGroup.visible = showYear;
+    this.moonGroup.visible = showMoon;
+    this.moonHoleCover.visible = !showMoon;
+    this.dayDateGroup.visible = showDayDate;
+    this.monthGroup.visible = showMonth;
+    this.yearGroup.visible = showYear;
 
-    this.updateMoonPhase(moonPhase);
+    if (showMoon && moonPhase !== this.lastMoonPhase) {
+      this.updateMoonPhase(moonPhase);
+      this.lastMoonPhase = moonPhase;
+    }
 
-    if (this.dayLabel) this.updateTextSprite(this.dayLabel, DAY_LABELS[dayIndex] ?? 'MON');
-    if (this.dateLabel) this.updateTextSprite(this.dateLabel, String(dateNum));
-    if (this.monthLabel) this.updateTextSprite(this.monthLabel, MONTH_LABELS[monthIndex] ?? 'JAN');
-    if (this.yearLabel) this.updateTextSprite(this.yearLabel, String(year));
+    this.updateTextSprite(this.dayLabel, DAY_LABELS[dayIndex] ?? 'MON');
+    this.updateTextSprite(this.dateLabel, String(dateNum));
+    this.updateTextSprite(this.monthLabel, MONTH_LABELS[monthIndex] ?? 'JAN');
+    this.updateTextSprite(this.yearLabel, String(year));
   }
 
   updateHands() {
@@ -600,27 +658,84 @@ export class WatchScene {
     const minutes = d.getMinutes() + d.getSeconds() / 60;
     const seconds = d.getSeconds();
 
-    if (this.hourHand) this.hourHand.rotation.z = -(hours / 12) * Math.PI * 2;
-    if (this.minuteHand) this.minuteHand.rotation.z = -(minutes / 60) * Math.PI * 2;
-    if (this.secondHand) this.secondHand.rotation.z = -(seconds / 60) * Math.PI * 2;
+    this.hourHand.rotation.z = -(hours / 12) * Math.PI * 2;
+    this.minuteHand.rotation.z = -(minutes / 60) * Math.PI * 2;
+    this.secondHand.rotation.z = -(seconds / 60) * Math.PI * 2;
   }
 
   onResize() {
-    const w = this.canvas.clientWidth;
-    const h = this.canvas.clientHeight;
+    const w = Math.max(1, this.canvas.clientWidth);
+    const h = Math.max(1, this.canvas.clientHeight);
+    // updateStyle=false: CSS owns the canvas size so it can shrink with the layout.
+    this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(w, h);
+
+    // Fit the whole watch in view regardless of aspect ratio (phones are tall and narrow).
+    const vHalf = THREE.MathUtils.degToRad(this.camera.fov / 2);
+    const hHalf = Math.atan(Math.tan(vHalf) * this.camera.aspect);
+    const previous = this.homeDistance;
+    this.homeDistance = (WATCH_RADIUS * 1.06) / Math.sin(Math.min(vHalf, hHalf));
+    this.controls.minDistance = this.homeDistance * 0.45;
+    this.controls.maxDistance = this.homeDistance * 1.6;
+
+    // Keep the user's zoom level relative to the new fit.
+    if (previous && this.camera.position.lengthSq() > 0) {
+      const offset = this.camera.position.clone().sub(this.controls.target);
+      offset.multiplyScalar(this.homeDistance / previous);
+      this.camera.position.copy(this.controls.target).add(offset);
+    }
+    if (this.cameraGoal && this.highlightedPart && PARTS[this.highlightedPart]) {
+      const { x, y } = PARTS[this.highlightedPart];
+      if (this.highlightedPart !== 'hands') this.focusOn(x, y);
+    }
   }
 
   animate() {
     requestAnimationFrame(this.animate);
+    const dt = Math.min(this.clock.getDelta(), 0.1);
+    const t = this.clock.elapsedTime;
+
+    if (this.cameraGoal) {
+      const k = 1 - Math.exp(-dt * 5);
+      this.camera.position.lerp(this.cameraGoal.position, k);
+      this.controls.target.lerp(this.cameraGoal.target, k);
+      if (
+        this.camera.position.distanceToSquared(this.cameraGoal.position) < 1e-5 &&
+        this.controls.target.distanceToSquared(this.cameraGoal.target) < 1e-5
+      ) {
+        this.cameraGoal = null;
+      }
+    }
+
+    if (this.highlight.visible) {
+      this.highlightMaterial.opacity = reducedMotion ? 0.9 : 0.55 + 0.4 * Math.sin(t * 4);
+    }
+
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
   }
 
   dispose() {
+    this.resizeObserver.disconnect();
+    this.controls.dispose();
     this.renderer.dispose();
-    window.removeEventListener('resize', () => this.onResize());
   }
+}
+
+function frameGeometry(w, h, t) {
+  const outer = new THREE.Shape();
+  outer.moveTo(-w / 2 - t, -h / 2 - t);
+  outer.lineTo(w / 2 + t, -h / 2 - t);
+  outer.lineTo(w / 2 + t, h / 2 + t);
+  outer.lineTo(-w / 2 - t, h / 2 + t);
+  outer.closePath();
+  const hole = new THREE.Path();
+  hole.moveTo(-w / 2, -h / 2);
+  hole.lineTo(-w / 2, h / 2);
+  hole.lineTo(w / 2, h / 2);
+  hole.lineTo(w / 2, -h / 2);
+  hole.closePath();
+  outer.holes.push(hole);
+  return new THREE.ShapeGeometry(outer);
 }

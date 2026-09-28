@@ -2,12 +2,15 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f5f3ee" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f1318" media="(prefers-color-scheme: dark)" />
     <title>WatchAdjust — Complication Setup Guide</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap"
       rel="stylesheet"
     />
   </head>
@@ -15,46 +18,68 @@
     <div id="app">
       <header class="header">
         <div class="brand">
-          <span class="brand-mark">◷</span>
+          <span class="brand-mark" aria-hidden="true">◷</span>
           <h1>WatchAdjust</h1>
+          <p class="tagline">Learn how to set any watch complication</p>
         </div>
-        <p class="tagline">Set your complications to the correct position</p>
+        <button type="button" id="theme-toggle" class="icon-btn" aria-label="Switch to light theme">
+          <span aria-hidden="true">☀</span>
+        </button>
       </header>
 
       <main class="layout">
         <section class="viewport" aria-label="3D watch preview">
-          <canvas id="watch-canvas"></canvas>
-          <div class="viewport-hint">Drag to rotate · Scroll to zoom</div>
+          <canvas id="watch-canvas" aria-label="Interactive 3D watch"></canvas>
+
+          <div class="viewport-top">
+            <p class="viewport-hint" id="viewport-hint">Drag to turn · Scroll to zoom</p>
+            <button type="button" id="reset-view" class="chip-btn">Reset view</button>
+          </div>
+
+          <div class="timebar" role="group" aria-label="Time travel">
+            <button type="button" class="tb-btn" data-step="-1M" aria-label="Back one month" title="Back one month">«</button>
+            <button type="button" class="tb-btn" data-step="-1d" aria-label="Back one day" title="Back one day">‹</button>
+            <output class="tb-readout" id="tb-readout" aria-live="off">
+              <span class="tb-date"></span>
+              <span class="tb-time"></span>
+            </output>
+            <button type="button" class="tb-btn" data-step="1d" aria-label="Forward one day" title="Forward one day">›</button>
+            <button type="button" class="tb-btn" data-step="1M" aria-label="Forward one month" title="Forward one month">»</button>
+            <button type="button" class="tb-btn tb-play" id="play" aria-pressed="false" aria-label="Play time forward" title="Watch time pass">
+              <span aria-hidden="true">▶</span>
+            </button>
+          </div>
         </section>
 
-        <aside class="panel" aria-label="Adjustment controls">
-          <div class="panel-section">
-            <label class="field-label" for="complication-type">Complication</label>
-            <select id="complication-type" class="select">
-              <option value="moon-phase">Moon Phase</option>
-              <option value="annual-calendar">Annual Calendar</option>
-              <option value="perpetual-calendar">Perpetual Calendar</option>
-              <option value="day-date">Day-Date</option>
-              <option value="complete-calendar">Complete Calendar</option>
-            </select>
-          </div>
+        <aside class="panel" aria-label="Adjustment guide">
+          <fieldset class="panel-section">
+            <legend class="field-label"><span class="badge">1</span> Which watch feature?</legend>
+            <div id="complication-picker" class="picker"></div>
+          </fieldset>
 
           <div class="panel-section">
-            <label class="field-label" for="target-date">Target date &amp; time</label>
-            <input type="datetime-local" id="target-date" class="input" />
-            <button type="button" id="use-now" class="btn-secondary">Use current time</button>
-          </div>
-
-          <div class="panel-section">
-            <label class="field-label" for="timezone">Timezone</label>
+            <label class="field-label" for="target-date"><span class="badge">2</span> Date &amp; time to set</label>
             <div class="field-row">
-              <select id="timezone" class="select field-row-main"></select>
-              <button type="button" id="locate-me" class="btn-secondary btn-locate">Locate me</button>
+              <input type="datetime-local" id="target-date" class="input field-row-main" />
+              <button type="button" id="use-now" class="btn-secondary">Now</button>
             </div>
+            <details class="tz">
+              <summary>
+                Time zone: <span id="tz-current"></span>
+              </summary>
+              <div class="field-row">
+                <select id="timezone" class="select field-row-main" aria-label="Time zone"></select>
+                <button type="button" id="locate-me" class="btn-secondary">Locate me</button>
+              </div>
+              <p class="field-hint">Only matters for the moon — it's the same moon everywhere, but "tonight" depends on where you are.</p>
+            </details>
             <p id="location-status" class="field-hint" aria-live="polite"></p>
           </div>
 
-          <div id="instructions" class="instructions" role="region" aria-live="polite"></div>
+          <div class="panel-section">
+            <span class="field-label"><span class="badge">3</span> Follow the steps</span>
+            <div id="instructions" class="instructions" role="region" aria-live="polite" aria-label="Instructions"></div>
+          </div>
         </aside>
       </main>
     </div>
