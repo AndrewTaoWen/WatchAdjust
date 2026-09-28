@@ -1,5 +1,14 @@
-export function renderInstructions(container, result) {
-  const { title, summary, values, steps, notes } = result;
+import { linkTerms } from './glossary.js';
+
+/**
+ * @param {HTMLElement} container
+ * @param {object} result from computeAdjustments
+ * @param {{ about?: string, name?: string, done?: Set<number>, active?: number | null }} ui
+ */
+export function renderInstructions(container, result, ui = {}) {
+  const { summary, values, steps, notes } = result;
+  const { about = '', name = result.title, done = new Set(), active = null } = ui;
+  const seen = new Set();
 
   const valuesHtml = Object.entries(values)
     .map(
@@ -12,35 +21,55 @@ export function renderInstructions(container, result) {
     .join('');
 
   const stepsHtml = steps
-    .map(
-      (s, i) => `
-        <li class="step">
-          <span class="step-num">${i + 1}</span>
+    .map((s, i) => {
+      const isDone = done.has(i);
+      const isActive = active === i;
+      return `
+        <li class="step${isDone ? ' is-done' : ''}${isActive ? ' is-active' : ''}" data-index="${i}" data-part="${s.part ?? ''}">
+          <label class="step-check">
+            <input type="checkbox" ${isDone ? 'checked' : ''} aria-label="Mark step ${i + 1} as done" />
+            <span class="step-num" aria-hidden="true">${i + 1}</span>
+          </label>
           <div class="step-body">
             <strong>${escapeHtml(s.title)}</strong>
-            <p>${escapeHtml(s.detail)}</p>
+            <p>${linkTerms(escapeHtml(s.detail), seen)}</p>
+            ${
+              s.part
+                ? `<button type="button" class="step-show" aria-pressed="${isActive}">
+                    ${isActive ? 'Showing on watch' : 'Show on watch'}
+                  </button>`
+                : ''
+            }
           </div>
-        </li>`,
-    )
+        </li>`;
+    })
     .join('');
 
   const notesHtml = notes
-    .map(
-      (n) => `<div class="note note-${n.type}">${escapeHtml(n.text)}</div>`,
-    )
+    .map((n) => `<div class="note note-${n.type}">${linkTerms(escapeHtml(n.text), seen)}</div>`)
     .join('');
+
+  const doneCount = steps.filter((_, i) => done.has(i)).length;
 
   container.innerHTML = `
     <div class="result">
-      <h2 class="result-title">${escapeHtml(title)}</h2>
+      <details class="about" open>
+        <summary>What is a ${escapeHtml(name)}?</summary>
+        <p>${linkTerms(escapeHtml(about), seen)}</p>
+      </details>
+
       <p class="result-summary">${escapeHtml(summary)}</p>
 
       <div class="values-grid">${valuesHtml}</div>
 
-      <h3 class="section-heading">How to adjust</h3>
+      <div class="section-head">
+        <h3 class="section-heading">How to set it</h3>
+        <span class="progress" aria-live="polite">${doneCount}/${steps.length} done</span>
+      </div>
+      <p class="section-hint">Tap a step to see where it is on the watch. Underlined words explain themselves.</p>
       <ol class="steps">${stepsHtml}</ol>
 
-      <h3 class="section-heading">Notes</h3>
+      <h3 class="section-heading">Good to know</h3>
       <div class="notes">${notesHtml}</div>
     </div>
   `;
@@ -111,7 +140,7 @@ export function nowInTimezone(timezone) {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-    hour12: false,
+    hourCycle: 'h23',
   });
   const parts = Object.fromEntries(
     formatter.formatToParts(new Date()).filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]),
@@ -125,4 +154,45 @@ export function nowInTimezone(timezone) {
     0,
     0,
   );
+}
+
+/**
+ * Interpret a wall-clock Date (built from local components) as a time in
+ * `timezone` and return the matching absolute instant.
+ */
+export function wallClockToInstant(date, timezone) {
+  const asUtc = Date.UTC(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+    date.getHours(),
+    date.getMinutes(),
+  );
+  let instant = asUtc - tzOffsetMs(asUtc, timezone);
+  // Second pass settles DST transitions.
+  instant = asUtc - tzOffsetMs(instant, timezone);
+  return new Date(instant);
+}
+
+function tzOffsetMs(utcMs, timezone) {
+  try {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        hourCycle: 'h23',
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: 'numeric',
+      })
+        .formatToParts(new Date(utcMs))
+        .filter((p) => p.type !== 'literal')
+        .map((p) => [p.type, Number(p.value)]),
+    );
+    const wall = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute);
+    return wall - Math.floor(utcMs / 60000) * 60000;
+  } catch {
+    return -new Date(utcMs).getTimezoneOffset() * 60000;
+  }
 }
