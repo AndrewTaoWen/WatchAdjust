@@ -71,6 +71,12 @@ describe('planner drives every model to the target', () => {
         if (indicators.includes('moon')) expect(moonClose(state.moonAge, target.moonAge)).toBe(true);
         expect(state.crown).toBe(0);
         if (model.screwDown) expect(state.screwed).toBe(true);
+        if (indicators.includes('chrono')) {
+          expect(state.chronoReset).toBe(true);
+          expect(state.chronoRunning).toBe(false);
+          expect(state.pushersLocked).toBe(Boolean(model.chrono.screwDownPushers));
+        }
+        if (model.manualWind) expect(state.windTurns).toBeGreaterThanOrEqual(30);
       });
     }
   }
@@ -99,6 +105,26 @@ describe('mechanism', () => {
     const s = createState(iwc, { minutes: 600, crown: 1, date: 5 });
     const { state, log } = run(iwc, s, { type: 'turn', dir: -1 });
     expect(state.date).toBe(5);
+    expect(log[0].type).toBe('warning');
+  });
+
+  it('chronograph starts, stops, and only resets when stopped', () => {
+    const chrono = MODELS.find((m) => m.id === 'omega-speedmaster-professional');
+    let s = createState(chrono);
+    s = run(chrono, s, { type: 'press', corrector: 'start', now: 1000 }).state;
+    const blocked = run(chrono, s, { type: 'press', corrector: 'reset', now: 5000 });
+    expect(blocked.log[0].type).toBe('danger');
+    expect(blocked.state.chronoRunning).toBe(true);
+    s = run(chrono, s, { type: 'press', corrector: 'start', now: 13500 }).state;
+    expect(s.chronoElapsed).toBeCloseTo(12.5);
+    s = run(chrono, s, { type: 'press', corrector: 'reset', now: 20000 }).state;
+    expect([s.chronoElapsed, s.chronoReset]).toEqual([0, true]);
+  });
+
+  it('Daytona pushers must be unscrewed first', () => {
+    const daytona = MODELS.find((m) => m.id === 'rolex-daytona');
+    const { state, log } = run(daytona, createState(daytona), { type: 'press', corrector: 'start', now: 0 });
+    expect(state.chronoRunning).toBe(false);
     expect(log[0].type).toBe('warning');
   });
 

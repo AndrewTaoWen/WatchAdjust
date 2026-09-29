@@ -34,6 +34,7 @@ export const DIALS = {
   white: { stops: ['#fbfbf9', '#f4f3ef', '#e2e0da'], ink: '#1a1a1a', rays: 0.5 },
   champagne: { stops: ['#efdfb4', '#e0cb97', '#c3a770'], ink: '#3a2c10', rays: 1.8 },
   blue: { stops: ['#34609f', '#234a82', '#132b50'], ink: '#eef2f8', rays: 2.2 },
+  black: { stops: ['#2a2e34', '#1b1e23', '#0d0f12'], ink: '#f1f0ec', rays: 0.8 },
 };
 
 // ---------- Materials ----------
@@ -461,7 +462,8 @@ export function buildCrown(materials) {
  * A recessed corrector button in the case flank at a clock position. Returns
  * a group whose `userData.push` is the button that moves when pressed.
  */
-export function buildCorrector(materials, clock) {
+export function buildCorrector(materials, clock, style = 'corrector') {
+  if (style === 'pusher') return buildPusher(materials, clock);
   const angle = Math.PI / 2 - (clock / 12) * Math.PI * 2;
   const group = new THREE.Group();
 
@@ -483,6 +485,217 @@ export function buildCorrector(materials, clock) {
   group.position.z = 0.02;
   group.userData = { push, restX: 1.565, angle };
   return group;
+}
+
+/**
+ * A chronograph pusher: a tube out of the case flank with a button on the
+ * end. `userData.setCollar(true)` adds the threaded collar of a screw-down
+ * pusher.
+ */
+function buildPusher(materials, clock) {
+  const angle = Math.PI / 2 - (clock / 12) * Math.PI * 2;
+  const group = new THREE.Group();
+
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.048, 0.12, 24), materials.polished);
+  tube.rotation.z = -Math.PI / 2;
+  tube.position.x = 1.6;
+  tube.castShadow = true;
+  group.add(tube);
+
+  const push = new THREE.Mesh(new THREE.CylinderGeometry(0.062, 0.062, 0.07, 32), materials.polished);
+  push.rotation.z = -Math.PI / 2;
+  push.position.x = 1.69;
+  push.castShadow = true;
+  group.add(push);
+
+  // Screw-down collar: a fluted ring you unscrew before pressing.
+  const collarGeo = new THREE.CylinderGeometry(0.075, 0.075, 0.05, 48);
+  const pos = collarGeo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    const r = Math.hypot(x, z);
+    if (r < 0.06) continue;
+    const k = 1 - 0.08 * (0.5 + 0.5 * Math.cos(Math.atan2(z, x) * 16));
+    pos.setX(i, x * k);
+    pos.setZ(i, z * k);
+  }
+  collarGeo.computeVertexNormals();
+  const collar = new THREE.Mesh(collarGeo, materials.polished);
+  collar.rotation.z = -Math.PI / 2;
+  collar.position.x = 1.625;
+  collar.visible = false;
+  group.add(collar);
+
+  group.rotation.z = angle;
+  group.userData = {
+    push,
+    restX: 1.69,
+    angle,
+    setCollar: (on) => {
+      collar.visible = on;
+    },
+  };
+  return group;
+}
+
+// ---------- Chronograph ----------
+
+const SUBDIAL_SCALES = {
+  seconds: { max: 60, major: 10, labels: [20, 40, 60] },
+  minutes: { max: 30, major: 5, labels: [10, 20, 30] },
+  hours: { max: 12, major: 3, labels: [3, 6, 9, 12] },
+};
+
+/**
+ * A chronograph sub-dial: a printed scale with concentric "azurage" rings,
+ * slightly sunk into the dial, with its own small hand.
+ */
+export function buildSubdial(materials, kind, radius = 0.3) {
+  const scale = SUBDIAL_SCALES[kind];
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+
+  const draw = ({ face, ink }) => {
+    const ctx = canvas.getContext('2d');
+    const c = size / 2;
+    ctx.clearRect(0, 0, size, size);
+    ctx.fillStyle = face;
+    ctx.beginPath();
+    ctx.arc(c, c, c, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Azurage: fine concentric grooves.
+    for (let r = 8; r < c; r += 6) {
+      ctx.strokeStyle = `rgba(${ink === '#ffffff' ? '255,255,255' : '0,0,0'},0.06)`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(c, c, r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = ink;
+    ctx.fillStyle = ink;
+    const ticks = scale.max === 12 ? 24 : scale.max;
+    for (let i = 0; i < ticks; i++) {
+      const a = (i / ticks) * Math.PI * 2;
+      const value = (i / ticks) * scale.max;
+      const major = Number.isInteger(value / scale.major) && Number.isInteger(value);
+      ctx.lineWidth = major ? 7 : 3;
+      const r0 = c * (major ? 0.72 : 0.8);
+      ctx.beginPath();
+      ctx.moveTo(c + Math.sin(a) * r0, c - Math.cos(a) * r0);
+      ctx.lineTo(c + Math.sin(a) * c * 0.94, c - Math.cos(a) * c * 0.94);
+      ctx.stroke();
+    }
+    ctx.font = `600 ${Math.round(size * 0.13)}px "DM Sans", system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    scale.labels.forEach((v) => {
+      const a = (v / scale.max) * Math.PI * 2;
+      ctx.fillText(String(v), c + Math.sin(a) * c * 0.5, c - Math.cos(a) * c * 0.5);
+    });
+    texture.needsUpdate = true;
+  };
+
+  const group = new THREE.Group();
+  const face = new THREE.Mesh(
+    new THREE.CircleGeometry(radius, 64),
+    new THREE.MeshStandardMaterial({
+      map: texture,
+      roughness: 0.55,
+      transparent: true,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+    }),
+  );
+  face.position.z = DIAL_Z + 0.001;
+  face.receiveShadow = true;
+  group.add(face);
+
+  const handMat = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.6, roughness: 0.3 });
+  const handGeo = new THREE.BoxGeometry(0.014, radius * 0.95, 0.004);
+  handGeo.translate(0, radius * 0.95 * 0.5 - 0.04, 0);
+  const hand = new THREE.Mesh(handGeo, handMat);
+  hand.position.z = DIAL_Z + 0.012;
+  hand.castShadow = true;
+  group.add(hand);
+
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.01, 16), handMat);
+  cap.rotation.x = Math.PI / 2;
+  cap.position.z = DIAL_Z + 0.016;
+  group.add(cap);
+
+  group.userData = {
+    hand,
+    setStyle(style) {
+      draw(style);
+      handMat.color.set(style.hand);
+    },
+  };
+  draw({ face: '#e8e4da', ink: '#1c2a44' });
+  return group;
+}
+
+/** Tachymeter scale printed on a bezel insert: speed = 3600 / seconds. */
+export function buildTachymeter() {
+  const size = 2048;
+  const outer = 1.555;
+  const inner = 1.415;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
+
+  const draw = () => {
+    const c = size / 2;
+    const S = c / outer;
+    ctx.clearRect(0, 0, size, size);
+    ctx.fillStyle = '#121316';
+    ctx.beginPath();
+    ctx.arc(c, c, outer * S, 0, Math.PI * 2);
+    ctx.arc(c, c, inner * S, 0, Math.PI * 2, true);
+    ctx.fill();
+
+    ctx.fillStyle = '#f2f1ec';
+    ctx.strokeStyle = '#f2f1ec';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `600 ${0.058 * S}px "DM Sans", system-ui, sans-serif`;
+    const values = [500, 400, 300, 250, 200, 180, 160, 150, 140, 130, 120, 110, 100, 90, 80, 70, 60];
+    values.forEach((v) => {
+      const a = ((3600 / v) / 60) * Math.PI * 2;
+      ctx.save();
+      ctx.translate(c + Math.sin(a) * 1.475 * S, c - Math.cos(a) * 1.475 * S);
+      ctx.rotate(a);
+      ctx.fillText(String(v), 0, 0);
+      ctx.restore();
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(c + Math.sin(a) * 1.515 * S, c - Math.cos(a) * 1.515 * S);
+      ctx.lineTo(c + Math.sin(a) * 1.55 * S, c - Math.cos(a) * 1.55 * S);
+      ctx.stroke();
+    });
+    texture.needsUpdate = true;
+  };
+  draw();
+  document.fonts?.ready.then(draw);
+
+  const mesh = new THREE.Mesh(
+    new THREE.RingGeometry(inner, outer, 128),
+    new THREE.MeshStandardMaterial({ map: texture, roughness: 0.35, metalness: 0.2, transparent: true }),
+  );
+  mesh.position.z = 0.219;
+  mesh.visible = false;
+  return mesh;
 }
 
 // ---------- Applied indices ----------
@@ -639,13 +852,15 @@ export function createDialTexture(palette = 'cream') {
   texture.anisotropy = 8;
 
   let current = palette;
+  let caption = 'Automatic';
   const draw = () => {
-    drawDial(canvas.getContext('2d'), DIALS[current] ?? DIALS.cream);
+    drawDial(canvas.getContext('2d'), DIALS[current] ?? DIALS.cream, caption);
     texture.needsUpdate = true;
   };
-  texture.userData.setPalette = (name) => {
-    if (name === current) return;
+  texture.userData.setPalette = (name, nextCaption = 'Automatic') => {
+    if (name === current && nextCaption === caption) return;
     current = name;
+    caption = nextCaption;
     draw();
   };
   draw();
@@ -653,7 +868,7 @@ export function createDialTexture(palette = 'cream') {
   return texture;
 }
 
-function drawDial(ctx, palette) {
+function drawDial(ctx, palette, caption) {
   const c = DIAL_PX / 2;
   const S = c / DIAL_R; // px per world unit
   const P = (x, y) => [c + x * S, c - y * S];
@@ -710,7 +925,7 @@ function drawDial(ctx, palette) {
   ctx.fillText('WATCHADJUST', ...P(0, 0.31));
   ctx.font = `italic 500 ${0.052 * S}px "Cormorant Garamond", Georgia, serif`;
   ctx.letterSpacing = '0px';
-  ctx.fillText('Automatic', ...P(0, 0.215));
+  ctx.fillText(caption, ...P(0, 0.215));
 }
 
 /**

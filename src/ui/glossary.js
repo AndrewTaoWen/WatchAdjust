@@ -10,6 +10,10 @@ export const GLOSSARY = {
   'date window': 'The little window in the dial that shows the day of the month.',
   'leap year': 'A year with a February 29th — every 4 years, except century years not divisible by 400 (2100 is not a leap year).',
   'lunar age': 'Days since the last new moon. A full lunar cycle is about 29.5 days.',
+  chronograph: 'A stopwatch built into a watch, started, stopped and reset with pushers on the case side.',
+  tachymeter: 'A scale on the bezel for working out speed: time one kilometre or mile, and the number next to the centre hand is your speed per hour.',
+  flyback: 'A chronograph you can reset while it is running — one press and it snaps to zero and starts again. Ordinary chronographs must be stopped first.',
+  'hand-wound': 'A watch with no self-winding rotor. It only runs if you wind it with the crown, usually once a day.',
 };
 
 const TERMS = Object.keys(GLOSSARY).sort((a, b) => b.length - a.length);

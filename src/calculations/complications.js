@@ -65,6 +65,14 @@ export const COMPLICATIONS = [
     about:
       'Also called a "triple calendar": day, date and month plus a moon phase. Like a day-date, it needs a manual nudge at the end of short months.',
   },
+  {
+    id: 'chronograph',
+    name: 'Chronograph',
+    icon: '⏱',
+    tagline: 'A stopwatch built into the watch',
+    about:
+      'A stopwatch inside the watch. The top pusher starts and stops it, the bottom pusher resets it. The big centre hand counts seconds, and small dials count the minutes and hours — while another small dial keeps the watch\'s own seconds ticking.',
+  },
 ];
 
 /**
@@ -104,8 +112,18 @@ export function computeAdjustments(model, date, instant = date, { southern = fal
     values.lunarAge = `${moonAge.toFixed(1)} days`;
   }
   values.time = time;
+  if (has('chrono')) {
+    const { subdials } = model.chrono;
+    const at = (n) => `${n} o'clock`;
+    values.startStop = `Pusher at ${at(model.correctors.start)}`;
+    values.reset = `Pusher at ${at(model.correctors.reset)}`;
+    values.minuteCounter = at(subdials.minutes);
+    values.smallSeconds = at(subdials.seconds);
+  }
 
-  const summary = has('date')
+  const summary = has('chrono')
+    ? `Set the time to ${time}, then learn to start, stop and reset the stopwatch`
+    : has('date')
     ? `Set it to ${has('day') ? `${day}, ` : ''}${has('month') ? `${month} ` : 'the '}${has('month') ? dateNum : ordinal(dateNum)}${
         has('year') ? `, ${year}` : ''
       } at ${time}${has('moon') ? ` · ${moonName}` : ''}`
@@ -154,6 +172,18 @@ export function computeAdjustments(model, date, instant = date, { southern = fal
   if (kind === 'annual') notes.push(...getAnnualCalendarNotes(date));
   if (kind === 'perpetual') notes.push(...getPerpetualCalendarNotes(date));
 
+  if (has('chrono')) {
+    notes.push(
+      note('warning', 'Always stop the chronograph before pressing reset. On an ordinary chronograph, resetting while it runs strains the mechanism — only "flyback" models are built for it.'),
+    );
+    if (model.look.bezel === 'tachymeter') {
+      notes.push(
+        note('info', 'The numbers on the bezel are a tachymeter: start the chronograph at one kilometre (or mile) marker and stop it at the next. The bezel number next to the centre hand is your speed per hour.'),
+      );
+    }
+    notes.push(note('info', 'Running the chronograph all the time uses a little more power. Most owners start it only when timing something.'));
+  }
+
   if (has('moon')) {
     notes.push(
       note('info', `Tonight's moon: ${moonDesc}. Next new moon in about ${getDaysUntilNextPhase(phase, 0).toFixed(1)} days, next full moon in about ${getDaysUntilNextPhase(phase, 0.5).toFixed(1)}.`),
@@ -180,6 +210,7 @@ export function computeAdjustments(model, date, instant = date, { southern = fal
       showDayDate: has('date') || has('day'),
       showMonth: has('month'),
       showYear: has('year'),
+      showChrono: has('chrono'),
       moonPhase: phase,
       dayIndex: date.getDay(),
       dateNum,

@@ -16,6 +16,9 @@ import {
   createSunburstAnisotropyMap,
   createWindow,
   buildCorrector,
+  buildSubdial,
+  buildTachymeter,
+  DIALS,
   METALS,
   HAND_COLORS,
 } from './watchParts.js';
@@ -30,7 +33,11 @@ const COLORS = {
   danger: 0xdc2626,
 };
 
-const CORRECTOR_NAMES = ['date', 'day', 'month', 'moon'];
+const CORRECTOR_NAMES = ['date', 'day', 'month', 'moon', 'start', 'reset'];
+const PUSHERS = new Set(['start', 'reset']);
+const SUBDIAL_KINDS = ['seconds', 'minutes', 'hours'];
+const SUBDIAL_DISTANCE = 0.6;
+const clockAngle = (clock) => Math.PI / 2 - (clock / 12) * Math.PI * 2;
 const CROWN_STEP = 0.075; // how far the crown pulls out per click
 
 const HOME_DIRECTION = new THREE.Vector3(0, 2.4, 4.2).normalize();
@@ -161,7 +168,7 @@ export class WatchScene {
 
     this.correctors = {};
     CORRECTOR_NAMES.forEach((name) => {
-      const c = buildCorrector(materials, 10);
+      const c = buildCorrector(materials, 10, PUSHERS.has(name) ? 'pusher' : 'corrector');
       c.visible = false;
       this.correctors[name] = c;
       watch.add(c);
@@ -202,6 +209,20 @@ export class WatchScene {
     this.dayDateGroup = new THREE.Group();
     this.dayDateGroup.add(this.dayWindow.group, this.dateWindow.group);
     watch.add(this.dayDateGroup);
+
+    // Chronograph: three sub-dials, placed per model in setModel().
+    this.chronoGroup = new THREE.Group();
+    this.chronoGroup.visible = false;
+    this.subdials = {};
+    SUBDIAL_KINDS.forEach((kind) => {
+      this.subdials[kind] = buildSubdial(materials, kind);
+      this.chronoGroup.add(this.subdials[kind]);
+    });
+    watch.add(this.chronoGroup);
+    this.chronoSeconds = 0;
+
+    this.tachymeter = buildTachymeter();
+    watch.add(this.tachymeter);
 
     this.monthWindow = createWindow(materials, { w: 0.42, h: 0.16 });
     this.monthGroup = this.monthWindow.group;
@@ -563,15 +584,32 @@ export class WatchScene {
         delete this.parts[`corrector-${name}`];
         return;
       }
-      const angle = Math.PI / 2 - (clock / 12) * Math.PI * 2;
+      const angle = clockAngle(clock);
       c.rotation.z = angle;
+      const pusher = PUSHERS.has(name);
+      c.userData.setCollar?.(Boolean(model.chrono?.screwDownPushers));
+      const reach = pusher ? 1.7 : 1.64;
       this.parts[`corrector-${name}`] = {
         shape: 'ring',
-        x: Math.cos(angle) * 1.64,
-        y: Math.sin(angle) * 1.64,
-        r: 0.11,
+        x: Math.cos(angle) * reach,
+        y: Math.sin(angle) * reach,
+        r: pusher ? 0.13 : 0.11,
       };
     });
+
+    // Chronograph sub-dials at this model's clock positions.
+    if (model.chrono) {
+      SUBDIAL_KINDS.forEach((kind) => {
+        const a = clockAngle(model.chrono.subdials[kind]);
+        this.subdials[kind].position.set(Math.cos(a) * SUBDIAL_DISTANCE, Math.sin(a) * SUBDIAL_DISTANCE, 0);
+        this.parts[`subdial-${kind}`] = {
+          shape: 'ring',
+          x: Math.cos(a) * SUBDIAL_DISTANCE,
+          y: Math.sin(a) * SUBDIAL_DISTANCE,
+          r: 0.34,
+        };
+      });
+    }
 
     this.setDangerWindow(model.danger);
     this.setCrownPosition(0);
@@ -583,8 +621,16 @@ export class WatchScene {
     this.materials.brushed.color.setHex(metal.brushed);
     this.straps.steel.userData.satin.color.setHex(metal.brushed).multiplyScalar(0.88);
     this.handMaterial.color.setHex(HAND_COLORS[look.hands] ?? HAND_COLORS.blued);
-    this.dialTexture.userData.setPalette(look.dial);
+    this.dialTexture.userData.setPalette(look.dial, look.caption);
     this.caseGroup.userData.setFluted(look.bezel === 'fluted');
+    this.tachymeter.visible = look.bezel === 'tachymeter';
+
+    const palette = DIALS[look.dial] ?? DIALS.cream;
+    const subdialStyle =
+      look.subdials === 'black'
+        ? { face: '#15171b', ink: '#ffffff', hand: '#ffffff' }
+        : { face: palette.stops[1], ink: palette.ink, hand: palette.ink };
+    SUBDIAL_KINDS.forEach((kind) => this.subdials[kind].userData.setStyle(subdialStyle));
 
     // Window layout: some models put the date at 3 o'clock.
     const date = look.layout?.date ?? [BASE_PARTS.date.x, BASE_PARTS.date.y];
@@ -619,6 +665,12 @@ export class WatchScene {
     this.dangerArc.visible = Boolean(show && this.dangerWindow);
   }
 
+  /** Seconds shown on the chronograph (centre hand + counters). */
+  setChrono(seconds) {
+    this.chronoSeconds = seconds;
+    this.updateHands();
+  }
+
   // ---------- Crown & correctors ----------
 
   setCrownPosition(n) {
@@ -644,8 +696,9 @@ export class WatchScene {
     this.pickables = [this.crownProxy];
 
     CORRECTOR_NAMES.forEach((name) => {
-      const proxy = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 8), invisible);
-      proxy.position.x = 1.6;
+      const pusher = PUSHERS.has(name);
+      const proxy = new THREE.Mesh(new THREE.SphereGeometry(pusher ? 0.16 : 0.13, 12, 8), invisible);
+      proxy.position.x = pusher ? 1.68 : 1.6;
       proxy.userData.corrector = name;
       this.correctors[name].add(proxy);
       this.pickables.push(proxy);
@@ -747,6 +800,7 @@ export class WatchScene {
     } = state;
 
     this.moonGroup.visible = showMoon;
+    this.chronoGroup.visible = Boolean(state.showChrono);
     this.dayDateGroup.visible = showDayDate;
     this.monthGroup.visible = showMonth;
     this.yearGroup.visible = showYear;
@@ -770,7 +824,15 @@ export class WatchScene {
 
     this.hourHand.rotation.z = -(hours / 12) * Math.PI * 2;
     this.minuteHand.rotation.z = -(minutes / 60) * Math.PI * 2;
-    this.secondHand.rotation.z = -(seconds / 60) * Math.PI * 2;
+    if (this.sceneState.showChrono) {
+      // The centre seconds hand belongs to the chronograph; counters follow it.
+      const t = this.chronoSeconds;
+      this.secondHand.rotation.z = -((t % 60) / 60) * Math.PI * 2;
+      this.subdials.minutes.userData.hand.rotation.z = -(((t / 60) % 30) / 30) * Math.PI * 2;
+      this.subdials.hours.userData.hand.rotation.z = -(((t / 3600) % 12) / 12) * Math.PI * 2;
+    } else {
+      this.secondHand.rotation.z = -(seconds / 60) * Math.PI * 2;
+    }
   }
 
   onResize() {
@@ -823,6 +885,11 @@ export class WatchScene {
     this.crown.position.x += (crownX - this.crown.position.x) * (1 - Math.exp(-dt * 14));
     const spinner = this.crown.userData.spinner;
     spinner.rotation.y += (this.crownSpin - spinner.rotation.y) * (1 - Math.exp(-dt * 10));
+
+    // Running seconds on the small-seconds dial: the watch is alive.
+    if (this.chronoGroup.visible) {
+      this.subdials.seconds.userData.hand.rotation.z = -(((Date.now() / 1000) % 60) / 60) * Math.PI * 2;
+    }
 
     CORRECTOR_NAMES.forEach((name) => {
       const c = this.correctors[name];

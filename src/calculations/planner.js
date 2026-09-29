@@ -7,6 +7,7 @@ const MONTHS = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 const CLOCK = ['12', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11'];
+const MANUAL_WIND_TURNS = 30;
 const SAFE_PARK = 6 * 60; // 6:00 am — well clear of the midnight changeover
 const WIND_TURNS = 20;
 const mod = (n, m) => ((n % m) + m) % m;
@@ -109,17 +110,20 @@ export function planSteps({ model, target, previous, state = null, southern = fa
   // ----- Wind (optional) -----
   steps.push({
     id: 'wind',
-    optional: true,
-    title: 'If it has stopped, wind it',
-    detail: `With the crown pushed in, give it about ${WIND_TURNS} turns forward. That gets the movement running before you set it.`,
+    // A hand-wound watch has no rotor: winding is part of every setting.
+    optional: !model.manualWind,
+    title: model.manualWind ? 'Wind it fully' : 'If it has stopped, wind it',
+    detail: model.manualWind
+      ? `With the crown pushed in, turn it forward about ${MANUAL_WIND_TURNS} times until you feel it tighten. Stop there — never force it.`
+      : `With the crown pushed in, give it about ${WIND_TURNS} turns forward. That gets the movement running before you set it.`,
     part: 'crown',
-    done: known ? state.windTurns >= WIND_TURNS : undefined,
+    done: known ? state.windTurns >= (model.manualWind ? MANUAL_WIND_TURNS : WIND_TURNS) : undefined,
     actions: [
       {
-        label: `Wind ${WIND_TURNS} turns`,
+        label: `Wind ${model.manualWind ? MANUAL_WIND_TURNS : WIND_TURNS} turns`,
         action: [
           { type: 'setCrown', position: 0 },
-          { type: 'turn', dir: 1, clicks: WIND_TURNS },
+          { type: 'turn', dir: 1, clicks: model.manualWind ? MANUAL_WIND_TURNS : WIND_TURNS },
         ],
       },
     ],
@@ -300,7 +304,7 @@ export function planSteps({ model, target, previous, state = null, southern = fa
   // ----- Time -----
   const timeDiff = known ? mod(T - state.minutes, kind === 'none' ? 720 : 1440) : null;
   const timeDone = known && (timeDiff <= 2 || timeDiff >= (kind === 'none' ? 718 : 1438));
-  const calendarDone = steps.filter((s) => !s.optional && !s.info && s.id !== 'unscrew' && s.id !== 'park').every((s) => s.done);
+  const calendarDone = steps.filter((s) => !s.optional && !s.info && !['unscrew', 'park', 'wind'].includes(s.id)).every((s) => s.done);
   steps.push({
     id: 'time',
     title: `Set the time to ${formatMinutes(T)}`,
@@ -343,6 +347,9 @@ export function planSteps({ model, target, previous, state = null, southern = fa
       : [],
   });
 
+  // ----- Chronograph lesson -----
+  if (indicators.includes('chrono')) steps.push(...chronoSteps(model, state, home));
+
   // Once the time is set, the preparation steps count as done even though the
   // crown is back in and the hands may now sit in the changeover window.
   const timeStep = steps.find((s) => s.id === 'time');
@@ -355,4 +362,77 @@ export function planSteps({ model, target, previous, state = null, southern = fa
   const allSet = known && required.every((s) => s.done);
 
   return { steps, allSet };
+}
+
+const SUBDIAL_NAMES = { seconds: 'small seconds', minutes: 'minute counter', hours: 'hour counter' };
+
+/** Start, stop, read and reset the stopwatch — the part people actually use daily. */
+function chronoSteps(model, state, crownHome) {
+  const known = Boolean(state);
+  const { start, reset } = model.correctors;
+  const { subdials, screwDownPushers } = model.chrono;
+  const steps = [];
+  const press = (name, label) => ({ label, action: { type: 'press', corrector: name } });
+
+  if (screwDownPushers) {
+    steps.push({
+      id: 'pushers-unlock',
+      title: 'Unscrew the pushers',
+      detail: 'The pushers screw down like the crown. Turn each one anticlockwise a few turns until it moves freely.',
+      part: 'corrector-start',
+      done: known ? !state.pushersLocked || state.chronoReset : undefined,
+      actions: [{ label: 'Unscrew pushers', action: { type: 'unlockPushers' } }],
+    });
+  }
+
+  steps.push({
+    id: 'chrono-start',
+    title: 'Start the stopwatch',
+    detail: `Press the top pusher, at ${CLOCK[start]} o'clock. The big centre hand starts sweeping — that's the chronograph seconds. (The watch's own seconds keep ticking on the ${SUBDIAL_NAMES.seconds} dial at ${CLOCK[subdials.seconds]}.)`,
+    part: 'corrector-start',
+    done: known ? state.chronoStarted : undefined,
+    actions: [press('start', 'Press start')],
+  });
+
+  steps.push({
+    id: 'chrono-stop',
+    title: 'Stop it and read the time',
+    detail: `Press the top pusher again. Read the minutes on the ${SUBDIAL_NAMES.minutes} at ${CLOCK[subdials.minutes]} o'clock, the seconds from the centre hand, and the hours (if any) at ${CLOCK[subdials.hours]}.${
+      known && state.chronoStopped && !state.chronoReset ? ` It shows ${formatElapsed(state.chronoElapsed)}.` : ''
+    }`,
+    part: 'subdial-minutes',
+    done: known ? state.chronoStopped : undefined,
+    actions: known && state.chronoRunning ? [press('start', 'Press stop')] : [],
+  });
+
+  steps.push({
+    id: 'chrono-reset',
+    title: 'Reset to zero',
+    detail: `With it stopped, press the bottom pusher at ${CLOCK[reset]} o'clock. All the chronograph hands snap back to zero. Never press reset while it's running unless your watch is a "flyback".`,
+    part: 'corrector-reset',
+    done: known ? state.chronoReset : undefined,
+    actions: known && state.chronoStopped && !state.chronoRunning ? [press('reset', 'Press reset')] : [],
+  });
+
+  if (screwDownPushers) {
+    steps.push({
+      id: 'pushers-lock',
+      title: 'Screw the pushers back down',
+      detail: 'Turn each pusher clockwise until snug, so water can\'t get in.',
+      part: 'corrector-reset',
+      done: known ? state.chronoReset && state.pushersLocked : undefined,
+      actions: known && state.chronoReset ? [{ label: 'Screw down', action: { type: 'lockPushers' } }] : [],
+    });
+  }
+
+  // The lesson starts once the time is set.
+  if (known && !crownHome) steps.forEach((s) => (s.actions = s.done ? s.actions : []));
+  return steps;
+}
+
+export function formatElapsed(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const sec = Math.floor(seconds % 60);
+  return h ? `${h} h ${m} min ${sec} s` : m ? `${m} min ${sec} s` : `${sec} s`;
 }

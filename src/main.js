@@ -4,7 +4,7 @@ import { computeAdjustments, COMPLICATIONS } from './calculations/complications.
 import { planSteps, calendarValues, formatMinutes } from './calculations/planner.js';
 import { getMoonAge, isSouthernTimezone, PHASE_AGES, LUNAR_CYCLE } from './calculations/moonPhase.js';
 import { modelsFor, getModel, modelLabel, indicatorsFor, positionFor } from './watch/models.js';
-import { createState, applyAction, TIME_STEP } from './watch/mechanism.js';
+import { createState, applyAction, TIME_STEP, chronoElapsedAt } from './watch/mechanism.js';
 import {
   renderInstructions,
   populateTimezones,
@@ -158,8 +158,9 @@ function refresh({ panel = true } = {}) {
   if (practice) {
     showWatchState();
   } else {
-    watch.setTargetDate(date);
     watch.applySceneState(result.scene);
+    watch.setChrono(0);
+    watch.setTargetDate(date);
   }
 
   readoutDate.textContent = readoutDateFmt.format(date);
@@ -322,6 +323,25 @@ function showWatchState() {
     year: ws.year,
   });
   watch.setCrownPosition(ws.crown);
+  watch.setChrono(chronoElapsedAt(ws, performance.now()));
+  if (ws.chronoRunning) startChronoLoop();
+}
+
+// While the stopwatch runs, sweep its hands every frame.
+let chronoLoop = false;
+function startChronoLoop() {
+  if (chronoLoop) return;
+  chronoLoop = true;
+  const frame = () => {
+    const ws = state.watch;
+    if (state.mode !== 'practice' || !ws?.chronoRunning) {
+      chronoLoop = false;
+      return;
+    }
+    watch.setChrono(chronoElapsedAt(ws, performance.now()));
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
 }
 
 let toastTimer = null;
@@ -337,6 +357,7 @@ function toast(message) {
 }
 
 function apply(action) {
+  if (action.type === 'press') action = { ...action, now: performance.now() };
   const { state: next, messages } = applyAction(state.watch, state.model, action);
   const blocked = messages.some((m) => m.type === 'danger' || m.type === 'warning');
   state.watch = next;

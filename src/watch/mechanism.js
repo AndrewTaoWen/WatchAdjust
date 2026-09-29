@@ -15,6 +15,11 @@ import { daysInMonth } from '../calculations/calendar.js';
  *   screwed    screw-down crown is screwed in
  *   amPmKnown  the hands have been taken through midnight, so AM/PM is right
  *   windTurns  crown turns in the winding position
+ *
+ * Chronograph:
+ *   chronoRunning, chronoElapsed (seconds banked while stopped), chronoSince
+ *   (timestamp it last started), pushersLocked (screw-down pushers), and
+ *   chronoStarted / chronoStopped / chronoReset to track the lesson.
  */
 
 export const TIME_STEP = 10; // minutes per crown click when setting the time
@@ -33,8 +38,50 @@ export function createState(model, values) {
     screwed: Boolean(model.screwDown),
     amPmKnown: false,
     windTurns: 0,
+    chronoRunning: false,
+    chronoElapsed: 0,
+    chronoSince: 0,
+    chronoStarted: false,
+    chronoStopped: false,
+    chronoReset: false,
+    pushersLocked: Boolean(model.chrono?.screwDownPushers),
     ...values,
   };
+}
+
+/** Seconds on the chronograph at time `now` (ms, same clock as action.now). */
+export function chronoElapsedAt(state, now) {
+  return state.chronoElapsed + (state.chronoRunning ? Math.max(0, now - state.chronoSince) / 1000 : 0);
+}
+
+function pressChrono(s, model, name, now, messages) {
+  if (s.pushersLocked) {
+    messages.push({ type: 'warning', text: 'The pushers are screwed down. Unscrew them first.' });
+    return;
+  }
+  if (name === 'start') {
+    if (s.chronoRunning) {
+      s.chronoElapsed = chronoElapsedAt(s, now);
+      s.chronoRunning = false;
+      if (s.chronoStarted) s.chronoStopped = true;
+    } else {
+      s.chronoRunning = true;
+      s.chronoSince = now;
+      s.chronoStarted = true;
+    }
+    return;
+  }
+  // reset
+  if (s.chronoRunning && !model.chrono?.flyback) {
+    messages.push({
+      type: 'danger',
+      text: 'Stop it first. Pressing reset while the chronograph runs can damage an ordinary chronograph — only "flyback" models allow it.',
+    });
+    return;
+  }
+  s.chronoElapsed = 0;
+  s.chronoRunning = false;
+  if (s.chronoStopped) s.chronoReset = true;
 }
 
 const mod = (n, m) => ((n % m) + m) % m;
@@ -214,9 +261,29 @@ export function applyAction(state, model, action) {
       break;
     }
 
+    case 'unlockPushers':
+      if (s.pushersLocked) {
+        s.pushersLocked = false;
+        messages.push({ type: 'info', text: 'Pushers unscrewed — they\'re ready to use.' });
+      }
+      break;
+
+    case 'lockPushers':
+      if (s.chronoRunning) {
+        messages.push({ type: 'warning', text: 'Stop the chronograph before screwing the pushers down.' });
+      } else if (model.chrono?.screwDownPushers && !s.pushersLocked) {
+        s.pushersLocked = true;
+        messages.push({ type: 'success', text: 'Pushers screwed down — water-resistant again.' });
+      }
+      break;
+
     case 'press': {
       const name = action.corrector;
       if (!(name in model.correctors)) break;
+      if (name === 'start' || name === 'reset') {
+        pressChrono(s, model, name, action.now ?? Date.now(), messages);
+        break;
+      }
       if (inDanger(model, s.minutes)) {
         messages.push(dangerMessage(model));
         break;

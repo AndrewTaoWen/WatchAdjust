@@ -12,6 +12,8 @@
  *   time      – turning moves the hands (and the calendar at midnight)
  *
  * Correctors are recessed buttons on the case; `at` is the clock position.
+ * Chronographs use the same map for their pushers (`start`, `reset`) and add
+ * a `chrono` block describing the sub-dials.
  */
 
 /** Which displays each complication has. */
@@ -21,6 +23,7 @@ export const INDICATORS = {
   'annual-calendar': ['time', 'date', 'day', 'month'],
   'perpetual-calendar': ['time', 'date', 'day', 'month', 'year'],
   'complete-calendar': ['time', 'date', 'day', 'month', 'moon'],
+  chronograph: ['time', 'chrono'],
 };
 
 /** How the date moves at midnight. */
@@ -30,6 +33,7 @@ export const CALENDAR_KIND = {
   'annual-calendar': 'annual', // knows 30/31, not February
   'perpetual-calendar': 'perpetual', // knows everything
   'complete-calendar': 'simple-month', // 31-day disc; month steps on at the 31st→1st
+  chronograph: 'none',
 };
 
 const CONSERVATIVE_DANGER = [21, 3];
@@ -103,6 +107,19 @@ export const MODELS = [
     correctors: { day: 10, month: 2, moon: 4 },
     danger: CONSERVATIVE_DANGER,
     look: { metal: 'steel', dial: 'cream', bezel: 'smooth', hands: 'blued', strap: 'leather' },
+    notes: [],
+  },
+
+  {
+    id: 'typical-chronograph',
+    complication: 'chronograph',
+    brand: null,
+    name: 'Typical chronograph',
+    positions: [WIND, { label: '1st click', short: '1st', does: 'time' }],
+    correctors: { start: 2, reset: 4 },
+    danger: null,
+    chrono: { subdials: { seconds: 9, minutes: 3, hours: 6 } },
+    look: { metal: 'steel', dial: 'silver', bezel: 'smooth', hands: 'blued', strap: 'leather', subdials: 'match', caption: 'Chronograph' },
     notes: [],
   },
 
@@ -224,6 +241,44 @@ export const MODELS = [
     look: { metal: 'roseGold', dial: 'silver', bezel: 'smooth', hands: 'gold', strap: 'leather' },
     notes: [
       'The moon is set with a small corrector on the case side: each press moves it on one day.',
+    ],
+  },
+
+  {
+    id: 'omega-speedmaster-professional',
+    complication: 'chronograph',
+    brand: 'Omega',
+    name: 'Speedmaster Professional',
+    blurb: 'The "Moonwatch": hand-wound, black dial, tachymeter bezel.',
+    manualWind: true,
+    positions: [WIND, { label: '1st click', short: '1st', does: 'time' }],
+    correctors: { start: 2, reset: 4 },
+    danger: null,
+    chrono: { subdials: { seconds: 9, minutes: 3, hours: 6 } },
+    look: { metal: 'steel', dial: 'black', bezel: 'tachymeter', hands: 'steel', strap: 'steel', subdials: 'match', caption: 'Professional' },
+    notes: [
+      'This is a hand-wound watch: it has no rotor, so wind it every day, ideally at the same time. Stop when you feel resistance — never force it.',
+      'There is no date, so setting it is just the time: pull the crown out one click and turn.',
+    ],
+  },
+  {
+    id: 'rolex-daytona',
+    complication: 'chronograph',
+    brand: 'Rolex',
+    name: 'Cosmograph Daytona',
+    blurb: 'A racing chronograph with screw-down pushers and a tachymeter bezel.',
+    screwDown: true,
+    positions: [
+      { label: 'Screwed down / wind', short: 'In', does: 'wind' },
+      { label: '1st click', short: '1st', does: 'time' },
+    ],
+    correctors: { start: 2, reset: 4 },
+    danger: null,
+    chrono: { subdials: { seconds: 6, minutes: 3, hours: 9 }, screwDownPushers: true },
+    look: { metal: 'steel', dial: 'white', bezel: 'tachymeter', hands: 'steel', strap: 'steel', subdials: 'black', caption: 'Cosmograph' },
+    notes: [
+      'Both the crown and the pushers screw down to keep water out. Unscrew the pushers before timing anything, and screw them back down afterwards — never press them underwater.',
+      'The small seconds hand at 6 o\'clock shows the watch is running; the big centre hand is only for the chronograph.',
     ],
   },
 ];
