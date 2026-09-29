@@ -13,7 +13,7 @@ Open the URL shown in the terminal (typically `http://localhost:5173`).
 
 ## Features
 
-- **3D watch preview** — turn and zoom a stylized watch; hands and complication windows update to match your target date/time
+- **3D watch preview** — turn and zoom a realistic watch (leather strap or steel bracelet); hands and complication windows update to match your target date/time
 - **Beginner friendly** — each complication has a plain-English explanation, and watch jargon (crown, corrector, aperture…) is tappable for a definition
 - **Show on watch** — tap a step to highlight and zoom to the part of the watch it refers to; tick steps off as you go
 - **Time travel** — step a day or month at a time (← / →, Shift for months) or press play (Space) to watch the date flip and the moon wax and wane
