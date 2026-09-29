@@ -2,12 +2,17 @@ import { linkTerms } from './glossary.js';
 
 /**
  * @param {HTMLElement} container
- * @param {object} result from computeAdjustments
- * @param {{ about?: string, name?: string, done?: Set<number>, active?: number | null }} ui
+ * @param {object} result   from computeAdjustments
+ * @param {object} ui
+ * @param {object[]} ui.steps     from planSteps
+ * @param {boolean} [ui.practice] steps track a simulated watch (auto-ticked, with action buttons)
+ * @param {boolean} [ui.allSet]
+ * @param {Set<number>} [ui.done] manual ticks in guide mode
+ * @param {number|null} [ui.active]
  */
-export function renderInstructions(container, result, ui = {}) {
-  const { summary, values, steps, notes } = result;
-  const { about = '', name = result.title, done = new Set(), active = null } = ui;
+export function renderInstructions(container, result, ui) {
+  const { summary, values, notes } = result;
+  const { about = '', name = '', steps, practice = false, allSet = false, done = new Set(), active = null } = ui;
   const seen = new Set();
 
   const valuesHtml = Object.entries(values)
@@ -20,53 +25,82 @@ export function renderInstructions(container, result, ui = {}) {
     )
     .join('');
 
+  const current = practice ? steps.findIndex((s) => !s.done && !s.optional && !s.info) : -1;
+  let number = 0;
   const stepsHtml = steps
     .map((s, i) => {
-      const isDone = done.has(i);
-      const isActive = active === i;
+      const detail = linkTerms(escapeHtml(s.detail), seen);
+      if (s.info) {
+        return `<li class="step-info"><strong>${escapeHtml(s.title)}</strong><p>${detail}</p></li>`;
+      }
+      number += 1;
+      const isDone = practice ? s.done : done.has(i);
+      const isActive = practice ? (active ?? current) === i : active === i;
+      const marker = practice
+        ? `<span class="step-num" aria-hidden="true">${number}</span>
+           <span class="sr-only">${isDone ? 'Done' : i === current ? 'Next step' : 'To do'}</span>`
+        : `<label class="step-check">
+             <input type="checkbox" ${isDone ? 'checked' : ''} aria-label="Mark step ${number} as done" />
+             <span class="step-num" aria-hidden="true">${number}</span>
+           </label>`;
+      const actions =
+        practice && !isDone && s.actions?.length
+          ? `<div class="step-actions">${s.actions
+              .map((a, j) => `<button type="button" class="step-action" data-step="${i}" data-action="${j}">${escapeHtml(a.label)}</button>`)
+              .join('')}</div>`
+          : '';
+      const show =
+        !practice && s.part
+          ? `<button type="button" class="step-show" aria-pressed="${isActive}">${isActive ? 'Showing on watch' : 'Show on watch'}</button>`
+          : '';
       return `
-        <li class="step${isDone ? ' is-done' : ''}${isActive ? ' is-active' : ''}" data-index="${i}" data-part="${s.part ?? ''}">
-          <label class="step-check">
-            <input type="checkbox" ${isDone ? 'checked' : ''} aria-label="Mark step ${i + 1} as done" />
-            <span class="step-num" aria-hidden="true">${i + 1}</span>
-          </label>
+        <li class="step${isDone ? ' is-done' : ''}${isActive ? ' is-active' : ''}${practice && i === current ? ' is-current' : ''}${
+          s.optional ? ' is-optional' : ''
+        }" data-index="${i}" data-part="${s.part ?? ''}">
+          ${marker}
           <div class="step-body">
-            <strong>${escapeHtml(s.title)}</strong>
-            <p>${linkTerms(escapeHtml(s.detail), seen)}</p>
-            ${
-              s.part
-                ? `<button type="button" class="step-show" aria-pressed="${isActive}">
-                    ${isActive ? 'Showing on watch' : 'Show on watch'}
-                  </button>`
-                : ''
-            }
+            <strong>${escapeHtml(s.title)}${s.optional ? ' <span class="tag">optional</span>' : ''}</strong>
+            <p>${detail}</p>
+            ${actions}${show}
           </div>
         </li>`;
     })
     .join('');
 
+  const isTicked = (s) => (practice ? s.done : done.has(steps.indexOf(s)));
+  // Optional steps only count once they're done.
+  const counted = steps.filter((s) => !s.info && (!s.optional || isTicked(s)));
+  const doneCount = counted.filter(isTicked).length;
+
   const notesHtml = notes
     .map((n) => `<div class="note note-${n.type}">${linkTerms(escapeHtml(n.text), seen)}</div>`)
     .join('');
 
-  const doneCount = steps.filter((_, i) => done.has(i)).length;
-
   container.innerHTML = `
     <div class="result">
-      <details class="about" open>
-        <summary>What is a ${escapeHtml(name)}?</summary>
-        <p>${linkTerms(escapeHtml(about), seen)}</p>
-      </details>
+      ${
+        about
+          ? `<details class="about"${practice ? '' : ' open'}>
+              <summary>What is a ${escapeHtml(name)}?</summary>
+              <p>${linkTerms(escapeHtml(about), seen)}</p>
+            </details>`
+          : ''
+      }
 
       <p class="result-summary">${escapeHtml(summary)}</p>
-
       <div class="values-grid">${valuesHtml}</div>
 
+      ${allSet ? '<div class="success" role="status">✓ Your watch is set. Nicely done!</div>' : ''}
+
       <div class="section-head">
-        <h3 class="section-heading">How to set it</h3>
-        <span class="progress" aria-live="polite">${doneCount}/${steps.length} done</span>
+        <h3 class="section-heading">${practice ? 'Steps for your watch' : 'How to set it'}</h3>
+        <span class="progress">${doneCount}/${counted.length} done</span>
       </div>
-      <p class="section-hint">Tap a step to see where it is on the watch. Underlined words explain themselves.</p>
+      <p class="section-hint">${
+        practice
+          ? 'Use the buttons, the crown bar under the watch, or tap and drag the crown itself. Steps tick off as your watch matches.'
+          : 'Tap a step to see where it is on the watch. Underlined words explain themselves.'
+      }</p>
       <ol class="steps">${stepsHtml}</ol>
 
       <h3 class="section-heading">Good to know</h3>

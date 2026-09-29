@@ -55,12 +55,29 @@
               <span aria-hidden="true">▶</span>
             </button>
           </div>
+
+          <div class="timebar crownbar" id="crownbar" role="group" aria-label="Crown" hidden>
+            <button type="button" class="tb-btn" id="crown-push" aria-label="Push the crown in one click" title="Push in">⇤</button>
+            <output class="tb-readout crown-readout" aria-live="polite">
+              <span class="tb-date" id="crown-pos"></span>
+              <span class="tb-time" id="crown-does"></span>
+            </output>
+            <button type="button" class="tb-btn" id="crown-pull" aria-label="Pull the crown out one click" title="Pull out">⇥</button>
+            <button type="button" class="tb-btn" id="crown-back" aria-label="Turn the crown backwards" title="Turn back">↺</button>
+            <button type="button" class="tb-btn tb-play" id="crown-fwd" aria-label="Turn the crown forwards" title="Turn forward">↻</button>
+            <button type="button" class="chip-btn crown-screw" id="crown-screw" hidden>Screw down</button>
+          </div>
+
+          <div id="toast" class="toast" role="status" aria-live="assertive" hidden></div>
         </section>
 
         <aside class="panel" aria-label="Adjustment guide">
           <fieldset class="panel-section">
             <legend class="field-label"><span class="badge">1</span> Which watch feature?</legend>
             <div id="complication-picker" class="picker"></div>
+            <label class="model-label" for="model">Watch model</label>
+            <select id="model" class="select"></select>
+            <p id="model-blurb" class="field-hint"></p>
           </fieldset>
 
           <div class="panel-section">
@@ -78,13 +95,26 @@
                 <button type="button" id="locate-me" class="btn-secondary">Locate me</button>
               </div>
               <p class="field-hint">Only matters for the moon — it's the same moon everywhere, but "tonight" depends on where you are.</p>
+              <label class="inline-field">
+                Moon view
+                <select id="hemisphere" class="select select-sm">
+                  <option value="auto">Automatic</option>
+                  <option value="north">Northern Hemisphere</option>
+                  <option value="south">Southern Hemisphere</option>
+                </select>
+              </label>
             </details>
             <p id="location-status" class="field-hint" aria-live="polite"></p>
           </div>
 
           <div class="panel-section">
-            <span class="field-label"><span class="badge">3</span> Follow the steps</span>
-            <div id="instructions" class="instructions" role="region" aria-live="polite" aria-label="Instructions"></div>
+            <span class="field-label"><span class="badge">3</span> Set it</span>
+            <div class="tabs" role="tablist" aria-label="How to learn">
+              <button type="button" role="tab" id="tab-guide" aria-selected="true" aria-controls="instructions">Read the steps</button>
+              <button type="button" role="tab" id="tab-practice" aria-selected="false" aria-controls="instructions">Set it yourself</button>
+            </div>
+            <div id="practice-setup" class="practice-setup" hidden></div>
+            <div id="instructions" class="instructions" role="tabpanel" aria-live="polite" aria-label="Instructions"></div>
           </div>
         </aside>
       </main>

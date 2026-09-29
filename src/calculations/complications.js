@@ -2,21 +2,19 @@ import {
   getMoonPhase,
   getMoonIllumination,
   getMoonPhaseName,
-  getMoonDiscRotation,
   getDaysUntilNextPhase,
+  LUNAR_CYCLE,
 } from './moonPhase.js';
 import {
   getDayName,
   getMonthName,
   formatTime12h,
-  formatTime24h,
+  isLeapYear,
+  daysInMonth,
   getAnnualCalendarNotes,
   getPerpetualCalendarNotes,
 } from './calendar.js';
-
-function step(title, detail, part = null) {
-  return { title, detail, part };
-}
+import { indicatorsFor, inDanger, formatDanger, CALENDAR_KIND } from '../watch/models.js';
 
 function note(type, text) {
   return { type, text };
@@ -70,288 +68,123 @@ export const COMPLICATIONS = [
 ];
 
 /**
- * @param {string} type complication id
- * @param {Date} date wall-clock time the watch should show
- * @param {Date} [instant] the same moment as an absolute time (in the chosen timezone);
- *   used for astronomy, where the timezone matters.
+ * What the watch should show for a target moment, plus notes. The steps
+ * themselves come from the planner, which knows the specific model.
+ *
+ * @param {object} model   watch model (see watch/models.js)
+ * @param {Date} date      wall-clock time the watch should show
+ * @param {Date} [instant] the same moment as an absolute time in the chosen
+ *   time zone; the moon depends on it
+ * @param {{ southern?: boolean }} [opts]
  */
-export function computeAdjustments(type, date, instant = date) {
-  switch (type) {
-    case 'moon-phase':
-      return computeMoonPhase(date, instant);
-    case 'annual-calendar':
-      return computeAnnualCalendar(date, instant);
-    case 'perpetual-calendar':
-      return computePerpetualCalendar(date, instant);
-    case 'day-date':
-      return computeDayDate(date);
-    case 'complete-calendar':
-      return computeCompleteCalendar(date, instant);
-    default:
-      return computeMoonPhase(date, instant);
-  }
-}
+export function computeAdjustments(model, date, instant = date, { southern = false } = {}) {
+  const indicators = indicatorsFor(model);
+  const kind = CALENDAR_KIND[model.complication];
+  const has = (i) => indicators.includes(i);
 
-function computeMoonPhase(date, instant) {
   const phase = getMoonPhase(instant);
-  const { name, desc } = getMoonPhaseName(phase);
+  const moonAge = phase * LUNAR_CYCLE;
+  const { name: moonName, desc: moonDesc } = getMoonPhaseName(phase, southern);
   const illumination = getMoonIllumination(phase);
-  const rotation = getMoonDiscRotation(phase);
-  const daysToNew = getDaysUntilNextPhase(phase, 0);
-  const daysToFull = getDaysUntilNextPhase(phase, 0.5);
+  const time = formatTime12h(date);
+  const day = getDayName(date);
+  const month = getMonthName(date);
+  const dateNum = date.getDate();
+  const year = date.getFullYear();
+  const minutes = date.getHours() * 60 + date.getMinutes();
+
+  const values = {};
+  if (has('day')) values.dayOfWeek = day;
+  if (has('date')) values.date = String(dateNum);
+  if (has('month')) values.month = month;
+  if (has('year')) values.year = String(year);
+  if (has('moon')) {
+    values.moon = moonName;
+    values.illumination = `${illumination}%`;
+    values.lunarAge = `${moonAge.toFixed(1)} days`;
+  }
+  values.time = time;
+
+  const summary = has('date')
+    ? `Set it to ${has('day') ? `${day}, ` : ''}${has('month') ? `${month} ` : 'the '}${has('month') ? dateNum : ordinal(dateNum)}${
+        has('year') ? `, ${year}` : ''
+      } at ${time}${has('moon') ? ` · ${moonName}` : ''}`
+    : `Set the moon to ${moonName} (${illumination}% lit) and the time to ${time}`;
+
+  const notes = [];
+
+  if (model.danger && inDanger(model, minutes)) {
+    notes.push(
+      note(
+        'warning',
+        `${time} is inside the ${formatDanger(model)} changeover, when the calendar gears are moving. The steps set the calendar first with the hands at 6 o'clock, and move the hands to ${time} last.`,
+      ),
+    );
+  } else if (model.danger) {
+    notes.push(
+      note(
+        'info',
+        `Don't use the correctors or quick-set between ${formatDanger(model)}: the calendar is changing over then, and forcing it can break a tooth.`,
+      ),
+    );
+  }
+
+  if (kind === 'simple' || kind === 'simple-month') {
+    const prevMonthDays = daysInMonth(year, date.getMonth() - 1);
+    if (dateNum === 1 && prevMonthDays < 31) {
+      notes.push(
+        note(
+          'warning',
+          `Last month had ${prevMonthDays} days, but the date wheel always counts to 31. If the watch ran through the month, it will show ${prevMonthDays + 1} today — advance it to the 1st.`,
+        ),
+      );
+    }
+    notes.push(
+      note(
+        'info',
+        'The date wheel always counts to 31, so after shorter months you move it on by hand — five times a year.',
+      ),
+    );
+  }
+  if (kind === 'simple' && has('day')) {
+    notes.push(
+      note('info', 'Both windows change around midnight. On some watches the day follows a little after the date — that\'s normal.'),
+    );
+  }
+  if (kind === 'annual') notes.push(...getAnnualCalendarNotes(date));
+  if (kind === 'perpetual') notes.push(...getPerpetualCalendarNotes(date));
+
+  if (has('moon')) {
+    notes.push(
+      note('info', `Tonight's moon: ${moonDesc}. Next new moon in about ${getDaysUntilNextPhase(phase, 0).toFixed(1)} days, next full moon in about ${getDaysUntilNextPhase(phase, 0.5).toFixed(1)}.`),
+    );
+    notes.push(note('info', 'Most moon discs drift by about a day every 2½–3 years, so check it against the sky now and then.'));
+    if (southern) {
+      notes.push(note('info', 'You\'re in the Southern Hemisphere, where the moon looks flipped left-to-right. Most moon-phase watches show the northern view.'));
+    }
+  }
+
+  if (model.brand) {
+    model.notes.forEach((text) => notes.push(note('info', text)));
+    notes.push(note('info', `These steps follow the usual instructions for the ${model.brand} ${model.name}. Your watch's manual has the final word.`));
+  }
 
   return {
-    title: 'Moon Phase',
-    summary: `Set moon disc to ${name} (${illumination}% illuminated)`,
-    values: {
-      phase: name,
-      illumination: `${illumination}%`,
-      lunarAge: `${(phase * 29.53).toFixed(1)} days`,
-    },
-    steps: [
-      step(
-        'Pull crown to time-setting position',
-        'Many moon phase watches move the moon disc with the crown pulled out one or two clicks. Others use a small corrector — a recessed button on the case side you press with a stylus. Check your manual.',
-        'crown',
-      ),
-      step(
-        'Advance time forward',
-        'Turn the crown so the hands move forward. Each two full turns of the hour hand (24 hours) moves the moon disc about one day. If your watch has a corrector, each press moves it one day instead.',
-        'hands',
-      ),
-      step(
-        `Align to ${name}`,
-        `Stop when the aperture shows ${desc}. About ${illumination}% of the moon should be lit — compare with the watch on the left.`,
-        'moon',
-      ),
-      step(
-        'Verify against reference',
-        'Compare with tonight\'s sky or a moon calendar. Fine-tune in small steps — only ever move the moon forward unless your manual says reversing is safe.',
-        'moon',
-      ),
-    ],
-    notes: [
-      note('info', `Current lunar age: ${(phase * 29.53).toFixed(1)} days since new moon.`),
-      note('info', `Next new moon in ~${daysToNew.toFixed(1)} days. Next full moon in ~${daysToFull.toFixed(1)} days.`),
-      note('info', 'Moon phase accuracy drifts ~1 day every 2.7 years on most watches — plan a reset periodically.'),
-    ],
+    title: model.brand ? `${model.brand} ${model.name}` : model.name,
+    summary,
+    values,
+    notes,
+    target: { minutes, date: dateNum, day: date.getDay(), month: date.getMonth(), year, moonAge },
     scene: {
+      showMoon: has('moon'),
+      showDayDate: has('date') || has('day'),
+      showMonth: has('month'),
+      showYear: has('year'),
       moonPhase: phase,
-      moonRotation: rotation,
-      showMoon: true,
-      showDayDate: false,
-      showMonth: false,
-      showYear: false,
-    },
-  };
-}
-
-function computeAnnualCalendar(date, instant) {
-  const day = getDayName(date);
-  const month = getMonthName(date);
-  const dateNum = date.getDate();
-  const year = date.getFullYear();
-  const time = formatTime12h(date);
-
-  return {
-    title: 'Annual Calendar',
-    summary: `Set to ${day}, ${month} ${dateNum}, ${year} at ${time}`,
-    values: {
-      dayOfWeek: day,
-      date: dateNum.toString(),
-      month,
-      year: year.toString(),
-      time,
-    },
-    steps: [
-      step(
-        'Set the time first',
-        `Pull the crown out to the time-setting position and move the hands to ${formatTime24h(date)} (${time}).`,
-        'hands',
-      ),
-      step(
-        'Set the date',
-        `Use the quick-set (crown one click out) or a corrector. Advance until the date window reads ${dateNum}.`,
-        'date',
-      ),
-      step(
-        'Set the month',
-        `Move the month subdial or window to ${month}. This often uses its own corrector on the case.`,
-        'month',
-      ),
-      step(
-        'Set the day of week',
-        `Advance the day-of-week indicator until it displays ${day}.`,
-        'day',
-      ),
-      step(
-        'Check everything',
-        `Confirm: ${day} · ${month} ${dateNum}, ${year} · ${time}. Push the crown back in.`,
-        'crown',
-      ),
-    ],
-    notes: getAnnualCalendarNotes(date),
-    scene: {
-      moonPhase: getMoonPhase(instant),
-      showMoon: false,
-      showDayDate: true,
-      showMonth: true,
-      showYear: false,
-      dayIndex: date.getDay(),
-      dateNum,
-      monthIndex: date.getMonth(),
-    },
-  };
-}
-
-function computePerpetualCalendar(date, instant) {
-  const day = getDayName(date);
-  const month = getMonthName(date);
-  const dateNum = date.getDate();
-  const year = date.getFullYear();
-  const time = formatTime12h(date);
-
-  return {
-    title: 'Perpetual Calendar',
-    summary: `Set to ${day}, ${month} ${dateNum}, ${year} at ${time}`,
-    values: {
-      dayOfWeek: day,
-      date: dateNum.toString(),
-      month,
-      year: year.toString(),
-      time,
-      leapYear: year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 'Yes' : 'No',
-    },
-    steps: [
-      step(
-        'Do not adjust between 9 PM and 3 AM',
-        'Around midnight the calendar gears are busy changing the date. Using a corrector then can damage the movement, so set the hands to midday first.',
-        'hands',
-      ),
-      step(
-        'Set the time',
-        `Advance hands to ${formatTime24h(date)} (${time}).`,
-        'hands',
-      ),
-      step(
-        'Set date, month, and year',
-        `Use the correctors per your manual. Target: ${month} ${dateNum}, ${year}.`,
-        'date',
-      ),
-      step(
-        'Set day of week',
-        `Advance until the day indicator reads ${day}.`,
-        'day',
-      ),
-      step(
-        'Set leap-year indicator if present',
-        `Some watches show leap year on a subdial. For ${year}, set the leap-year cycle to the correct position (year ${year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 'is' : 'is not'} a leap year).`,
-        'year',
-      ),
-    ],
-    notes: getPerpetualCalendarNotes(date),
-    scene: {
-      moonPhase: getMoonPhase(instant),
-      showMoon: false,
-      showDayDate: true,
-      showMonth: true,
-      showYear: true,
       dayIndex: date.getDay(),
       dateNum,
       monthIndex: date.getMonth(),
       year,
-    },
-  };
-}
-
-function computeDayDate(date) {
-  const day = getDayName(date);
-  const dateNum = date.getDate();
-  const time = formatTime12h(date);
-
-  return {
-    title: 'Day-Date',
-    summary: `Set to ${day}, the ${ordinal(dateNum)} at ${time}`,
-    values: {
-      dayOfWeek: day,
-      date: dateNum.toString(),
-      time,
-    },
-    steps: [
-      step(
-        'Set the time',
-        `Pull the crown all the way out and move the hands to ${formatTime24h(date)} (${time}).`,
-        'hands',
-      ),
-      step(
-        'Set the date',
-        `Push the crown in one click (quick-set) and turn it until the date window shows ${dateNum}.`,
-        'date',
-      ),
-      step(
-        'Set the day',
-        `Turn the crown the other way until the day window reads ${day}. On Rolex-style watches, the date changes at midnight and the day shortly after.`,
-        'day',
-      ),
-      step(
-        'Check the language',
-        'Some watches cycle through two languages for the day. Keep going until you see your preferred one.',
-        'day',
-      ),
-    ],
-    notes: [
-      note('info', 'Day-date watches typically flip the day at midnight and the date around 12:01 AM.'),
-      note('info', 'Avoid quick-setting the date between 10 PM and 2 AM when the mechanism is engaged.'),
-    ],
-    scene: {
-      showMoon: false,
-      showDayDate: true,
-      showMonth: false,
-      showYear: false,
-      dayIndex: date.getDay(),
-      dateNum,
-    },
-  };
-}
-
-function computeCompleteCalendar(date, instant) {
-  const day = getDayName(date);
-  const month = getMonthName(date);
-  const dateNum = date.getDate();
-  const time = formatTime12h(date);
-  const phase = getMoonPhase(instant);
-  const { name: moonName } = getMoonPhaseName(phase);
-
-  return {
-    title: 'Complete Calendar',
-    summary: `${day}, ${month} ${dateNum} · Moon: ${moonName}`,
-    values: {
-      dayOfWeek: day,
-      date: dateNum.toString(),
-      month,
-      moonPhase: moonName,
-      time,
-    },
-    steps: [
-      step('Set the time', `Advance the hands to ${formatTime24h(date)} (${time}).`, 'hands'),
-      step('Set the date', `Turn the date window to ${dateNum}.`, 'date'),
-      step('Set the day of week', `Set the day indicator to ${day}.`, 'day'),
-      step('Set the month', `Set the month subdial to ${month}.`, 'month'),
-      step('Set the moon phase', `Move the moon disc to ${moonName} (see the Moon Phase guide for technique).`, 'moon'),
-    ],
-    notes: [
-      note('info', 'Complete calendars combine date, day, month, and moon phase — set each in the order your manual specifies.'),
-      note('warning', 'Like annual calendars, month-length variations may require manual correction at month-end.'),
-    ],
-    scene: {
-      moonPhase: phase,
-      showMoon: true,
-      showDayDate: true,
-      showMonth: true,
-      showYear: false,
-      dayIndex: date.getDay(),
-      dateNum,
-      monthIndex: date.getMonth(),
     },
   };
 }

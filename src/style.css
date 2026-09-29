@@ -858,6 +858,255 @@ select {
   border-color: var(--success);
 }
 
+/* ---------- Models, tabs & practice ---------- */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.model-label {
+  margin-top: 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.select-sm {
+  min-height: 2.25rem;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.88rem;
+}
+
+.inline-field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.inline-field .select {
+  width: auto;
+}
+
+.tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.tabs [role='tab'] {
+  min-height: var(--tap);
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.tabs [role='tab'][aria-selected='true'] {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.ws-card {
+  padding: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.ws-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ws-head .section-heading {
+  margin: 0;
+}
+
+.ws-card .section-hint {
+  margin: 0.35rem 0 0.7rem;
+}
+
+.ws-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: 0.6rem;
+}
+
+.ws-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.ws-time {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.ws-time .select {
+  flex: 1;
+  min-width: 0;
+}
+
+.step.is-current {
+  border-color: var(--focus);
+  background: var(--focus-soft);
+}
+
+.step.is-current .step-num {
+  background: var(--focus);
+  border-color: var(--focus);
+  color: #fff;
+}
+
+.step.is-optional:not(.is-done) .step-num {
+  border-style: dashed;
+}
+
+.tag {
+  display: inline-block;
+  margin-left: 0.3rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  vertical-align: 1px;
+}
+
+.step-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.step-action {
+  min-height: 2.25rem;
+  padding: 0.3rem 0.85rem;
+  border-radius: 999px;
+  border: 1px solid var(--focus);
+  background: var(--focus);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.step-action + .step-action {
+  background: transparent;
+  color: var(--focus);
+}
+
+.step-action:hover {
+  filter: brightness(1.08);
+}
+
+.step-info {
+  list-style: none;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  border-left: 3px solid var(--info);
+  background: var(--info-bg);
+  font-size: 0.84rem;
+}
+
+.step-info p {
+  color: var(--text);
+  margin-top: 0.15rem;
+}
+
+.success {
+  margin-bottom: 1rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 10px;
+  background: var(--success-bg);
+  border: 1px solid var(--success);
+  color: var(--success);
+  font-weight: 600;
+}
+
+/* Crown bar replaces the time bar in practice mode */
+.crownbar .tb-btn {
+  font-size: 1.15rem;
+}
+
+.crownbar .tb-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.crown-readout {
+  min-width: 10rem;
+}
+
+.crown-readout .tb-time {
+  white-space: nowrap;
+}
+
+.crown-screw {
+  margin-left: 0.25rem;
+  white-space: nowrap;
+}
+
+.toast {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--timebar-space) + 0.5rem);
+  transform: translateX(-50%);
+  width: min(28rem, calc(100% - 1.5rem));
+  padding: 0.65rem 0.85rem;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--info);
+  box-shadow: var(--shadow);
+  font-size: 0.85rem;
+  line-height: 1.4;
+  z-index: 2;
+}
+
+.toast[data-type='danger'] {
+  border-left-color: #dc2626;
+  background: color-mix(in srgb, #dc2626 10%, var(--surface));
+}
+
+.toast[data-type='warning'] {
+  border-left-color: var(--warning);
+}
+
+.toast[data-type='success'] {
+  border-left-color: var(--success);
+}
+
+[hidden] {
+  display: none !important;
+}
+
 /* ---------- Responsive ---------- */
 
 /* Tablet & phone portrait: watch pinned on top, guide scrolls underneath. */
@@ -951,6 +1200,20 @@ select {
 
   .tb-readout {
     min-width: 6.75rem;
+  }
+
+  .crown-readout {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .crown-readout .tb-time {
+    white-space: normal;
+    font-size: 0.72rem;
+  }
+
+  .crownbar {
+    width: calc(100% - 1rem);
   }
 
   .tb-date {

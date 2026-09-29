@@ -15,6 +15,9 @@ import {
   createDialTexture,
   createSunburstAnisotropyMap,
   createWindow,
+  buildCorrector,
+  METALS,
+  HAND_COLORS,
 } from './watchParts.js';
 
 const MOON_Y = -0.58;
@@ -24,13 +27,18 @@ const MONTH_LABELS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'S
 
 const COLORS = {
   focus: 0x0d9488,
+  danger: 0xdc2626,
 };
+
+const CORRECTOR_NAMES = ['date', 'day', 'month', 'moon'];
+const CROWN_STEP = 0.075; // how far the crown pulls out per click
 
 const HOME_DIRECTION = new THREE.Vector3(0, 2.4, 4.2).normalize();
 const WATCH_RADIUS = 1.9; // case, crown and lugs — used to fit the camera
 
 // Where each settable part sits on the dial (watch-local coordinates).
-const PARTS = {
+// Copied per scene because some models move windows around.
+const BASE_PARTS = {
   crown: { shape: 'ring', x: 1.76, y: 0, r: 0.2 },
   hands: { shape: 'ring', x: 0, y: 0, r: 0.16 },
   moon: { shape: 'ring', x: 0, y: MOON_Y, r: MOON_R * 1.28 },
@@ -52,6 +60,11 @@ export class WatchScene {
     this.cameraGoal = null;
     this.highlightedPart = null;
     this.homeDistance = 6;
+    this.parts = structuredClone(BASE_PARTS);
+    this.crownPosition = 0;
+    this.crownSpin = 0;
+    this.southern = false;
+    this.handlers = null;
 
     this.init();
   }
@@ -137,17 +150,28 @@ export class WatchScene {
     const materials = createMaterials();
     this.materials = materials;
 
-    watch.add(buildCase(materials));
+    this.caseGroup = buildCase(materials);
+    watch.add(this.caseGroup);
     watch.add(buildLugs(materials));
     this.straps = buildStraps(materials);
     watch.add(this.straps.leather, this.straps.steel);
     this.setStrap('leather');
-    watch.add(buildCrown(materials));
+    this.crown = buildCrown(materials);
+    watch.add(this.crown);
 
+    this.correctors = {};
+    CORRECTOR_NAMES.forEach((name) => {
+      const c = buildCorrector(materials, 10);
+      c.visible = false;
+      this.correctors[name] = c;
+      watch.add(c);
+    });
+
+    this.dialTexture = createDialTexture();
     const dial = new THREE.Mesh(
       new THREE.CircleGeometry(DIAL_R, 128),
       new THREE.MeshPhysicalMaterial({
-        map: createDialTexture(),
+        map: this.dialTexture,
         roughness: 0.42,
         metalness: 0.12,
         anisotropy: 0.75,
@@ -189,7 +213,17 @@ export class WatchScene {
     this.yearGroup.position.x = -0.75;
     watch.add(this.yearGroup);
 
+    this.dangerArc = new THREE.Mesh(
+      new THREE.BufferGeometry(),
+      new THREE.MeshBasicMaterial({ color: COLORS.danger, transparent: true, opacity: 0.55, depthWrite: false }),
+    );
+    this.dangerArc.position.z = DIAL_Z + 0.004;
+    this.dangerArc.visible = false;
+    watch.add(this.dangerArc);
+
     watch.add(buildCrystal(materials));
+
+    this.buildPickProxies();
 
     this.highlight = this.buildHighlight();
     watch.add(this.highlight);
@@ -221,7 +255,7 @@ export class WatchScene {
   highlightPart(part) {
     if (part === this.highlightedPart) return;
     this.highlightedPart = part;
-    const cfg = PARTS[part];
+    const cfg = this.parts[part];
 
     const handGlow = part === 'hands' ? COLORS.focus : 0x000000;
     this.handMaterial.emissive.setHex(handGlow);
@@ -342,7 +376,13 @@ export class WatchScene {
     ctx.arc(cx, cy, r * 0.84, 0, Math.PI * 2);
     ctx.fill();
 
+    // Southern Hemisphere: the moon appears flipped left-to-right.
+    if (this.southern) {
+      ctx.translate(cx * 2, 0);
+      ctx.scale(-1, 1);
+    }
     this.drawAccurateMoon(ctx, cx, cy, r * 0.84, phase);
+    if (this.southern) ctx.setTransform(1, 0, 0, 1, 0, 0);
 
     // Recessed look: shade just inside the rim, heavier at the top.
     const lip = ctx.createRadialGradient(cx, cy + r * 0.08, r * 0.8, cx, cy, r);
@@ -507,6 +547,179 @@ export class WatchScene {
     ctx.stroke();
   }
 
+  // ---------- Models & looks ----------
+
+  /** Apply a watch model: its look, correctors and changeover window. */
+  setModel(model) {
+    this.model = model;
+    this.setLook(model.look);
+
+    // Correctors at the model's clock positions.
+    CORRECTOR_NAMES.forEach((name) => {
+      const c = this.correctors[name];
+      const clock = model.correctors[name];
+      c.visible = clock != null;
+      if (clock == null) {
+        delete this.parts[`corrector-${name}`];
+        return;
+      }
+      const angle = Math.PI / 2 - (clock / 12) * Math.PI * 2;
+      c.rotation.z = angle;
+      this.parts[`corrector-${name}`] = {
+        shape: 'ring',
+        x: Math.cos(angle) * 1.64,
+        y: Math.sin(angle) * 1.64,
+        r: 0.11,
+      };
+    });
+
+    this.setDangerWindow(model.danger);
+    this.setCrownPosition(0);
+  }
+
+  setLook(look) {
+    const metal = METALS[look.metal] ?? METALS.steel;
+    this.materials.polished.color.setHex(metal.polished);
+    this.materials.brushed.color.setHex(metal.brushed);
+    this.straps.steel.userData.satin.color.setHex(metal.brushed).multiplyScalar(0.88);
+    this.handMaterial.color.setHex(HAND_COLORS[look.hands] ?? HAND_COLORS.blued);
+    this.dialTexture.userData.setPalette(look.dial);
+    this.caseGroup.userData.setFluted(look.bezel === 'fluted');
+
+    // Window layout: some models put the date at 3 o'clock.
+    const date = look.layout?.date ?? [BASE_PARTS.date.x, BASE_PARTS.date.y];
+    this.dateWindow.group.position.set(date[0], date[1], 0);
+    this.parts.date = { ...BASE_PARTS.date, x: date[0], y: date[1] };
+    const moved = Boolean(look.layout?.date);
+    this.parts.dayDate = moved ? { ...BASE_PARTS.day } : { ...BASE_PARTS.dayDate };
+  }
+
+  setHemisphere(southern) {
+    if (southern === this.southern) return;
+    this.southern = southern;
+    this.lastMoonPhase = null;
+    if (this.sceneState.showMoon) this.updateMoonPhase(this.sceneState.moonPhase ?? 0);
+  }
+
+  /** Red arc over the hours when the calendar must not be adjusted. */
+  setDangerWindow(danger) {
+    this.dangerWindow = danger;
+    if (!danger) {
+      this.dangerArc.visible = false;
+      return;
+    }
+    const [from, to] = danger;
+    const span = Math.min(12, (((to - from) % 24) + 24) % 24);
+    const clockAngle = (h) => Math.PI / 2 - ((h % 12) / 12) * Math.PI * 2;
+    this.dangerArc.geometry.dispose();
+    this.dangerArc.geometry = new THREE.RingGeometry(1.35, 1.382, 96, 1, clockAngle(to), (span / 12) * Math.PI * 2);
+  }
+
+  showDangerWindow(show) {
+    this.dangerArc.visible = Boolean(show && this.dangerWindow);
+  }
+
+  // ---------- Crown & correctors ----------
+
+  setCrownPosition(n) {
+    this.crownPosition = n;
+  }
+
+  /** Spin the crown a little; dir > 0 is forward (clockwise seen from the crown). */
+  turnCrown(dir, clicks = 1) {
+    this.crownSpin += dir * Math.min(clicks, 6) * 0.5;
+  }
+
+  pressCorrector(name) {
+    const c = this.correctors[name];
+    if (!c) return;
+    c.userData.pressedAt = this.clock.elapsedTime;
+  }
+
+  buildPickProxies() {
+    const invisible = new THREE.MeshBasicMaterial({ visible: false });
+    this.crownProxy = new THREE.Mesh(new THREE.SphereGeometry(0.26, 12, 8), invisible);
+    this.crownProxy.position.set(0, 0.17, 0);
+    this.crown.add(this.crownProxy);
+    this.pickables = [this.crownProxy];
+
+    CORRECTOR_NAMES.forEach((name) => {
+      const proxy = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 8), invisible);
+      proxy.position.x = 1.6;
+      proxy.userData.corrector = name;
+      this.correctors[name].add(proxy);
+      this.pickables.push(proxy);
+    });
+  }
+
+  /**
+   * Let the user tap/drag the crown and tap correctors.
+   * @param {null | { onCrownTap(): void, onCrownTurn(dir: number): void, onCorrectorPress(name: string): void }} handlers
+   */
+  setInteractive(handlers) {
+    this.handlers = handlers;
+    if (this.pointerSetup) return;
+    this.pointerSetup = true;
+
+    const raycaster = new THREE.Raycaster();
+    const ndc = new THREE.Vector2();
+    const pick = (e) => {
+      const rect = this.canvas.getBoundingClientRect();
+      ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+      raycaster.setFromCamera(ndc, this.camera);
+      const visible = this.pickables.filter((p) => p.parent.visible);
+      const hit = raycaster.intersectObjects(visible, false)[0];
+      if (!hit) return null;
+      return hit.object === this.crownProxy ? { type: 'crown' } : { type: 'corrector', name: hit.object.userData.corrector };
+    };
+
+    let drag = null;
+    // Capture phase so we run before OrbitControls and can keep it from rotating.
+    this.canvas.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (!this.handlers) return;
+        const target = pick(e);
+        if (!target) return;
+        drag = { ...target, startY: e.clientY, lastY: e.clientY, moved: false, id: e.pointerId };
+        this.controls.enabled = false;
+        this.canvas.setPointerCapture(e.pointerId);
+        e.preventDefault();
+      },
+      { capture: true },
+    );
+
+    this.canvas.addEventListener('pointermove', (e) => {
+      if (!this.handlers) return;
+      if (!drag) {
+        this.canvas.style.cursor = pick(e) ? 'pointer' : '';
+        return;
+      }
+      if (drag.type !== 'crown') return;
+      const dy = drag.lastY - e.clientY;
+      if (Math.abs(e.clientY - drag.startY) > 6) drag.moved = true;
+      const CLICK_PX = 14;
+      while (Math.abs(drag.lastY - e.clientY) >= CLICK_PX) {
+        const dir = dy > 0 ? 1 : -1;
+        drag.lastY -= dir * CLICK_PX;
+        this.handlers.onCrownTurn(dir);
+      }
+    });
+
+    const end = (e) => {
+      if (!drag) return;
+      if (!drag.moved && this.handlers) {
+        if (drag.type === 'crown') this.handlers.onCrownTap();
+        else this.handlers.onCorrectorPress(drag.name);
+      }
+      if (this.canvas.hasPointerCapture(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId);
+      drag = null;
+      this.controls.enabled = true;
+    };
+    this.canvas.addEventListener('pointerup', end);
+    this.canvas.addEventListener('pointercancel', end);
+  }
+
   /** @param {'leather' | 'steel'} style */
   setStrap(style) {
     const steel = style === 'steel';
@@ -582,8 +795,8 @@ export class WatchScene {
       offset.multiplyScalar(this.homeDistance / previous);
       this.camera.position.copy(this.controls.target).add(offset);
     }
-    if (this.cameraGoal && this.highlightedPart && PARTS[this.highlightedPart]) {
-      const { x, y } = PARTS[this.highlightedPart];
+    if (this.cameraGoal && this.highlightedPart && this.parts[this.highlightedPart]) {
+      const { x, y } = this.parts[this.highlightedPart];
       if (this.highlightedPart !== 'hands') this.focusOn(x, y);
     }
   }
@@ -603,6 +816,24 @@ export class WatchScene {
       ) {
         this.cameraGoal = null;
       }
+    }
+
+    // Crown slides between positions and eases its spin.
+    const crownX = this.crown.userData.baseX + this.crownPosition * CROWN_STEP;
+    this.crown.position.x += (crownX - this.crown.position.x) * (1 - Math.exp(-dt * 14));
+    const spinner = this.crown.userData.spinner;
+    spinner.rotation.y += (this.crownSpin - spinner.rotation.y) * (1 - Math.exp(-dt * 10));
+
+    CORRECTOR_NAMES.forEach((name) => {
+      const c = this.correctors[name];
+      if (!c.visible) return;
+      const since = t - (c.userData.pressedAt ?? -10);
+      const depth = since < 0.25 ? Math.sin((since / 0.25) * Math.PI) * 0.025 : 0;
+      c.userData.push.position.x = c.userData.restX - depth;
+    });
+
+    if (this.dangerArc.visible) {
+      this.dangerArc.material.opacity = reducedMotion ? 0.55 : 0.4 + 0.2 * Math.sin(t * 2.5);
     }
 
     if (this.highlight.visible) {

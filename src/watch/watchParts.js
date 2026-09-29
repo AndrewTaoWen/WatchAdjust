@@ -11,6 +11,31 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 export const DIAL_Z = 0.12;
 export const DIAL_R = 1.385;
 
+// ---------- Looks ----------
+
+/** Metal colours are F0 reflectances, so gold is a saturated yellow. */
+export const METALS = {
+  steel: { polished: 0xd9dde2, brushed: 0xc9cdd3 },
+  whiteGold: { polished: 0xe6e3dc, brushed: 0xd3d0c8 },
+  yellowGold: { polished: 0xf3cf78, brushed: 0xdcb865 },
+  roseGold: { polished: 0xf2bfa2, brushed: 0xdca88c },
+};
+
+export const HAND_COLORS = {
+  blued: 0x2146a8,
+  steel: 0xe3e6ea,
+  gold: 0xe4bf66,
+};
+
+/** Dial palettes: gradient centre → edge, print colour, sunburst strength. */
+export const DIALS = {
+  cream: { stops: ['#f3ecdc', '#ebe2cd', '#d8cdb4'], ink: '#1c2a44', rays: 1 },
+  silver: { stops: ['#eef0f2', '#e1e4e8', '#c7ccd2'], ink: '#1c2a44', rays: 1.3 },
+  white: { stops: ['#fbfbf9', '#f4f3ef', '#e2e0da'], ink: '#1a1a1a', rays: 0.5 },
+  champagne: { stops: ['#efdfb4', '#e0cb97', '#c3a770'], ink: '#3a2c10', rays: 1.8 },
+  blue: { stops: ['#34609f', '#234a82', '#132b50'], ink: '#eef2f8', rays: 2.2 },
+};
+
 // ---------- Materials ----------
 
 export function createMaterials() {
@@ -129,21 +154,43 @@ export function buildCase(materials) {
   group.add(midcase);
 
   // Polished bezel with a sloped inner ring (rehaut) down to the dial.
-  const bezel = new THREE.Mesh(
-    lathe([
-      [1.558, 0.105],
-      [1.565, 0.14],
-      [1.55, 0.175],
-      [1.515, 0.2],
-      [1.465, 0.213],
-      [1.425, 0.214],
-      [1.408, 0.2],
-      [1.395, 0.16],
-      [1.386, DIAL_Z],
-    ]),
-    materials.polished,
-  );
-  group.add(bezel);
+  const bezelProfile = [
+    [1.558, 0.105],
+    [1.565, 0.14],
+    [1.55, 0.175],
+    [1.515, 0.2],
+    [1.465, 0.213],
+    [1.425, 0.214],
+    [1.408, 0.2],
+    [1.395, 0.16],
+    [1.386, DIAL_Z],
+  ];
+  const smooth = new THREE.Mesh(lathe(bezelProfile), materials.polished);
+  group.add(smooth);
+
+  // Fluted bezel: 60 grooves cut into the outer slope, as on a dress Rolex.
+  const flutedGeo = lathe(bezelProfile, 480);
+  const pos = flutedGeo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    const r = Math.hypot(x, y);
+    if (z < 0.135 || r < 1.44) continue;
+    const theta = Math.atan2(y, x);
+    const k = 1 - 0.0075 * Math.pow(0.5 + 0.5 * Math.cos(theta * 60), 2);
+    pos.setX(i, x * k);
+    pos.setY(i, y * k);
+  }
+  flutedGeo.computeVertexNormals();
+  const fluted = new THREE.Mesh(flutedGeo, materials.polished);
+  fluted.visible = false;
+  group.add(fluted);
+
+  group.userData.setFluted = (on) => {
+    fluted.visible = on;
+    smooth.visible = !on;
+  };
 
   group.traverse((o) => {
     o.castShadow = true;
@@ -329,7 +376,7 @@ function buildSteelBracelet(materials) {
       .multiply(new THREE.Matrix4().makeRotationX(-theta));
   };
 
-  return bothEnds(() => {
+  const bracelet = bothEnds(() => {
     const side = new THREE.Group();
 
     const end = new THREE.Mesh(endGeo, brushed);
@@ -348,6 +395,8 @@ function buildSteelBracelet(materials) {
     side.add(outers, centers);
     return side;
   });
+  bracelet.userData.satin = brushed;
+  return bracelet;
 }
 
 /** Both strap styles, built once so switching is instant. */
@@ -381,9 +430,11 @@ export function buildCrown(materials) {
     pos.setZ(i, z * k);
   }
   crownGeo.computeVertexNormals();
+  // The grip and cap spin together when the crown is turned.
+  const spinner = new THREE.Group();
   const grip = new THREE.Mesh(crownGeo, materials.polished);
   grip.position.y = 0.17;
-  group.add(grip);
+  spinner.add(grip);
 
   const cap = new THREE.Mesh(
     new THREE.SphereGeometry(0.12, 32, 12, 0, Math.PI * 2, 0, Math.PI / 5),
@@ -391,14 +442,46 @@ export function buildCrown(materials) {
   );
   cap.scale.y = 0.6;
   cap.position.y = 0.2;
-  group.add(cap);
+  spinner.add(cap);
+  group.add(spinner);
 
   // Cylinder axis is Y — point it out of the case at 3 o'clock.
   group.rotation.z = -Math.PI / 2;
   group.position.set(1.52, 0, 0);
+  group.userData = { spinner, baseX: 1.52, pickables: [grip, cap, stem] };
   group.traverse((o) => {
     o.castShadow = true;
   });
+  return group;
+}
+
+// ---------- Correctors ----------
+
+/**
+ * A recessed corrector button in the case flank at a clock position. Returns
+ * a group whose `userData.push` is the button that moves when pressed.
+ */
+export function buildCorrector(materials, clock) {
+  const angle = Math.PI / 2 - (clock / 12) * Math.PI * 2;
+  const group = new THREE.Group();
+
+  const recess = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.05, 0.05, 0.02, 24),
+    new THREE.MeshStandardMaterial({ color: 0x1b1d21, roughness: 0.8 }),
+  );
+  recess.rotation.z = -Math.PI / 2;
+  recess.position.x = 1.556;
+  group.add(recess);
+
+  const push = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.036, 0.04, 24), materials.polished);
+  push.rotation.z = -Math.PI / 2;
+  push.position.x = 1.565;
+  push.castShadow = true;
+  group.add(push);
+
+  group.rotation.z = angle;
+  group.position.z = 0.02;
+  group.userData = { push, restX: 1.565, angle };
   return group;
 }
 
@@ -547,7 +630,7 @@ export function buildHands(materials) {
 const DIAL_PX = 2048;
 
 /** Printed dial: cream sunburst base, minute track, brand line. Redraw when fonts load. */
-export function createDialTexture() {
+export function createDialTexture(palette = 'cream') {
   const canvas = document.createElement('canvas');
   canvas.width = DIAL_PX;
   canvas.height = DIAL_PX;
@@ -555,25 +638,31 @@ export function createDialTexture() {
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 8;
 
+  let current = palette;
   const draw = () => {
-    drawDial(canvas.getContext('2d'));
+    drawDial(canvas.getContext('2d'), DIALS[current] ?? DIALS.cream);
     texture.needsUpdate = true;
+  };
+  texture.userData.setPalette = (name) => {
+    if (name === current) return;
+    current = name;
+    draw();
   };
   draw();
   document.fonts?.ready.then(draw);
   return texture;
 }
 
-function drawDial(ctx) {
+function drawDial(ctx, palette) {
   const c = DIAL_PX / 2;
   const S = c / DIAL_R; // px per world unit
   const P = (x, y) => [c + x * S, c - y * S];
 
   // Base: warm cream with a gentle vignette toward the rim.
   const base = ctx.createRadialGradient(c, c * 0.9, 0, c, c, c);
-  base.addColorStop(0, '#f3ecdc');
-  base.addColorStop(0.75, '#ebe2cd');
-  base.addColorStop(1, '#d8cdb4');
+  base.addColorStop(0, palette.stops[0]);
+  base.addColorStop(0.75, palette.stops[1]);
+  base.addColorStop(1, palette.stops[2]);
   ctx.fillStyle = base;
   ctx.fillRect(0, 0, DIAL_PX, DIAL_PX);
 
@@ -582,7 +671,8 @@ function drawDial(ctx) {
   ctx.translate(c, c);
   for (let i = 0; i < 720; i++) {
     const a = (i / 720) * Math.PI * 2;
-    ctx.strokeStyle = `rgba(${i % 2 ? '255,255,255' : '120,100,70'},${0.025 + Math.random() * 0.025})`;
+    const alpha = (0.025 + Math.random() * 0.025) * palette.rays;
+    ctx.strokeStyle = `rgba(${i % 2 ? '255,255,255' : '60,50,35'},${alpha})`;
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(0, 0);
@@ -592,7 +682,7 @@ function drawDial(ctx) {
   ctx.restore();
 
   // Minute track: two rings with 60 ticks.
-  const ink = '#1c2a44';
+  const ink = palette.ink;
   ctx.strokeStyle = ink;
   ctx.lineWidth = 3;
   [1.285, 1.345].forEach((r) => {

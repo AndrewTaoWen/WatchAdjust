@@ -20,37 +20,32 @@ export function getMonthName(date) {
   return MONTHS[date.getMonth()];
 }
 
+/**
+ * An annual calendar knows 30- and 31-day months but treats February as a
+ * 30-day month, so it needs exactly one correction a year: on March 1st.
+ */
 export function getAnnualCalendarNotes(date) {
   const notes = [];
   const month = date.getMonth();
   const day = date.getDate();
   const year = date.getFullYear();
 
-  if (month === 1 && day === 28 && !isLeapYear(year + 1)) {
+  if (month === 2 && day === 1) {
     notes.push({
       type: 'warning',
-      text: 'Annual calendars cannot auto-handle February. After setting today, you must manually advance the date on March 1.',
+      text: 'Today is the one day a year an annual calendar needs help: it will be showing February 29th or 30th. Advance the date to the 1st with the date corrector.',
     });
-  }
-
-  if (month === 1 && day === 29) {
+  } else if (month === 1) {
+    const lastDay = isLeapYear(year) ? 29 : 28;
     notes.push({
       type: 'warning',
-      text: 'Most annual calendars have no Feb 29 position. Set to Feb 28, then advance to March 1 on the correct day.',
-    });
-  }
-
-  const nextMonthDays = daysInMonth(year, month + 1);
-  if (day === 30 && nextMonthDays === 31) {
-    notes.push({
-      type: 'info',
-      text: 'Annual calendars typically skip from the 30th directly to the 1st on 31-day months. Verify your watch behaves this way.',
+      text: `After February ${lastDay} your watch will show February ${lastDay + 1}${lastDay === 28 ? ' and then 30' : ''}, because it can't tell February is short. On March 1st, advance the date to the 1st.`,
     });
   }
 
   notes.push({
     type: 'info',
-    text: 'Annual calendars require manual date correction at the end of February and on months shorter than 31 days.',
+    text: 'Annual calendars move from the 30th to the 1st in 30-day months by themselves. The only manual correction is at the end of February.',
   });
 
   return notes;
