@@ -250,6 +250,60 @@ select {
   border-color: var(--text-muted);
 }
 
+.viewport-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  pointer-events: auto;
+}
+
+/* Segmented control (strap style) */
+.seg {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  backdrop-filter: blur(6px);
+}
+
+.seg label {
+  position: relative;
+  cursor: pointer;
+}
+
+.seg input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.seg span {
+  display: block;
+  min-height: calc(2rem - 6px);
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+  transition: background 0.15s, color 0.15s;
+}
+
+.seg label:hover span {
+  color: var(--text);
+}
+
+.seg input:checked + span {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.seg input:focus-visible + span {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
 /* Time-travel bar */
 .timebar {
   position: absolute;

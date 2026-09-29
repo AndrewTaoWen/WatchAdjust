@@ -6,7 +6,8 @@ import {
   createMaterials,
   createStudioEnvironment,
   buildCase,
-  buildLugsAndStrap,
+  buildLugs,
+  buildStraps,
   buildCrown,
   buildIndices,
   buildHands,
@@ -137,7 +138,10 @@ export class WatchScene {
     this.materials = materials;
 
     watch.add(buildCase(materials));
-    watch.add(buildLugsAndStrap(materials));
+    watch.add(buildLugs(materials));
+    this.straps = buildStraps(materials);
+    watch.add(this.straps.leather, this.straps.steel);
+    this.setStrap('leather');
     watch.add(buildCrown(materials));
 
     const dial = new THREE.Mesh(
@@ -501,6 +505,13 @@ export class WatchScene {
     ctx.moveTo(x, y - size);
     ctx.lineTo(x, y + size);
     ctx.stroke();
+  }
+
+  /** @param {'leather' | 'steel'} style */
+  setStrap(style) {
+    const steel = style === 'steel';
+    this.straps.steel.visible = steel;
+    this.straps.leather.visible = !steel;
   }
 
   setTargetDate(date) {

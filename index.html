@@ -33,7 +33,13 @@
 
           <div class="viewport-top">
             <p class="viewport-hint" id="viewport-hint">Drag to turn · Scroll to zoom</p>
-            <button type="button" id="reset-view" class="chip-btn">Reset view</button>
+            <div class="viewport-actions">
+              <div class="seg" role="radiogroup" aria-label="Strap">
+                <label><input type="radio" name="strap" value="leather" checked /><span>Leather</span></label>
+                <label><input type="radio" name="strap" value="steel" /><span>Steel</span></label>
+              </div>
+              <button type="button" id="reset-view" class="chip-btn">Reset view</button>
+            </div>
           </div>
 
           <div class="timebar" role="group" aria-label="Time travel">

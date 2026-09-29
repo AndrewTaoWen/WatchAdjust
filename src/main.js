@@ -147,6 +147,36 @@ if (!coarsePointer) {
 
 $('reset-view').addEventListener('click', () => setActiveStep(null));
 
+// ---------- Strap ----------
+
+const STRAP_KEY = 'watchadjust-strap';
+const strapInputs = document.querySelectorAll('input[name="strap"]');
+
+function applyStrap(style) {
+  watch.setStrap(style);
+  strapInputs.forEach((input) => {
+    input.checked = input.value === style;
+  });
+}
+
+try {
+  const saved = localStorage.getItem(STRAP_KEY);
+  if (saved === 'steel' || saved === 'leather') applyStrap(saved);
+} catch {
+  // Storage unavailable — keep the default strap.
+}
+
+strapInputs.forEach((input) =>
+  input.addEventListener('change', () => {
+    applyStrap(input.value);
+    try {
+      localStorage.setItem(STRAP_KEY, input.value);
+    } catch {
+      // Storage unavailable — the choice still applies for this visit.
+    }
+  }),
+);
+
 // ---------- Time travel ----------
 
 function shiftDate(step) {

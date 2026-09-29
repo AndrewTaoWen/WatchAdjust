@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 
 /*
  * Procedural builders for the realistic watch: case, lugs, strap, crown,
@@ -156,6 +157,23 @@ export function buildCase(materials) {
 const LUG_X = 0.6;
 const STRAP_WIDTH = 1.0;
 
+// Both straps follow the same imaginary wrist: a circle of radius WRIST_R that
+// starts between the lug tips and curves away from the viewer.
+const WRIST_R = 1.1;
+const STRAP_Y0 = 1.8;
+const STRAP_Z0 = -0.075;
+const STRAP_LENGTH = 1.9;
+
+/** Point on the wrist curve at arc length s, offset t along the surface normal. */
+function wristPoint(s, t = 0) {
+  const theta = s / WRIST_R;
+  return {
+    theta,
+    y: STRAP_Y0 + (WRIST_R + t) * Math.sin(theta),
+    z: STRAP_Z0 - WRIST_R + (WRIST_R + t) * Math.cos(theta),
+  };
+}
+
 function lugGeometry() {
   // Side profile (y along the watch, z up), extruded across the watch.
   const s = new THREE.Shape();
@@ -227,54 +245,117 @@ function leatherTexture() {
 
 function strapGeometry() {
   // A straight band bent around an imaginary wrist, curving away from the viewer.
-  const length = 1.9;
-  const thickness = 0.07;
-  const geo = new THREE.BoxGeometry(STRAP_WIDTH, length, thickness, 1, 48, 1);
+  const geo = new THREE.BoxGeometry(STRAP_WIDTH, STRAP_LENGTH, 0.07, 1, 48, 1);
   const pos = geo.attributes.position;
-  const R = 1.1;
-  const y0 = 1.8;
-  const z0 = -0.075;
   for (let i = 0; i < pos.count; i++) {
-    const s = pos.getY(i) + length / 2;
-    const t = pos.getZ(i);
-    const theta = s / R;
-    pos.setY(i, y0 + (R + t) * Math.sin(theta));
-    pos.setZ(i, z0 - R + (R + t) * Math.cos(theta));
+    const { y, z } = wristPoint(pos.getY(i) + STRAP_LENGTH / 2, pos.getZ(i));
+    pos.setY(i, y);
+    pos.setZ(i, z);
   }
   geo.computeVertexNormals();
   return geo;
 }
 
-export function buildLugsAndStrap(materials) {
+/** Build something at 12 o'clock, plus a copy rotated to 6 o'clock. */
+function bothEnds(build) {
   const group = new THREE.Group();
-  const lugGeo = lugGeometry();
-  const strapGeo = strapGeometry();
-  const leather = leatherTexture();
-  const strapMat = new THREE.MeshStandardMaterial({
-    map: leather,
-    bumpMap: leather,
-    bumpScale: 0.6,
-    roughness: 0.75,
-  });
-
-  // Build the 12 o'clock side, then rotate a copy for 6 o'clock.
   [0, Math.PI].forEach((rotation) => {
+    const side = build();
+    side.rotation.z = rotation;
+    group.add(side);
+  });
+  group.traverse((o) => {
+    o.castShadow = true;
+    o.receiveShadow = true;
+  });
+  return group;
+}
+
+export function buildLugs(materials) {
+  const lugGeo = lugGeometry();
+  return bothEnds(() => {
     const side = new THREE.Group();
     [-LUG_X, LUG_X].forEach((x) => {
       const lug = new THREE.Mesh(lugGeo, materials.brushed);
       lug.position.x = x;
       side.add(lug);
     });
-    side.add(new THREE.Mesh(strapGeo, strapMat));
-    side.rotation.z = rotation;
-    group.add(side);
+    return side;
   });
+}
 
-  group.traverse((o) => {
-    o.castShadow = true;
-    o.receiveShadow = true;
+function buildLeatherStrap() {
+  const geo = strapGeometry();
+  const leather = leatherTexture();
+  const mat = new THREE.MeshStandardMaterial({
+    map: leather,
+    bumpMap: leather,
+    bumpScale: 0.6,
+    roughness: 0.75,
   });
-  return group;
+  return bothEnds(() => new THREE.Mesh(geo, mat));
+}
+
+/**
+ * Three-piece-link steel bracelet (Oyster style): brushed outer links, a
+ * slightly raised polished centre link, and a solid end link against the lugs.
+ * Instanced so the ~60 links cost three draw calls.
+ */
+function buildSteelBracelet(materials) {
+  const pitch = 0.19;
+  const gap = 0.012;
+  const thickness = 0.075;
+  const outerW = 0.34;
+  const centerW = 0.3;
+  const rows = Math.floor((STRAP_LENGTH - pitch) / pitch);
+
+  // Brushing runs along the bracelet, not across it.
+  // Satin finish: rougher and less stretched than the case flank, so broad
+  // flat links don't blow out under the overhead light.
+  const brushed = materials.brushed.clone();
+  brushed.anisotropyRotation = Math.PI / 2;
+  brushed.anisotropy = 0.45;
+  brushed.roughness = 0.45;
+  brushed.color.setHex(0xa9aeb5);
+
+  const endGeo = new RoundedBoxGeometry(STRAP_WIDTH, pitch - gap, thickness, 3, 0.02);
+  const outerGeo = new RoundedBoxGeometry(outerW, pitch - gap, thickness, 3, 0.022);
+  const centerGeo = new RoundedBoxGeometry(centerW, pitch - gap * 1.5, thickness, 3, 0.03);
+
+  const place = (s, x, lift = 0) => {
+    const { theta, y, z } = wristPoint(s, lift);
+    return new THREE.Matrix4()
+      .makeTranslation(x, y, z)
+      .multiply(new THREE.Matrix4().makeRotationX(-theta));
+  };
+
+  return bothEnds(() => {
+    const side = new THREE.Group();
+
+    const end = new THREE.Mesh(endGeo, brushed);
+    end.applyMatrix4(place(pitch / 2, 0));
+    side.add(end);
+
+    const outers = new THREE.InstancedMesh(outerGeo, brushed, rows * 2);
+    const centers = new THREE.InstancedMesh(centerGeo, materials.polished, rows);
+    const outerX = centerW / 2 + gap + outerW / 2;
+    for (let r = 0; r < rows; r++) {
+      const s = pitch * (r + 1.5);
+      outers.setMatrixAt(r * 2, place(s, -outerX));
+      outers.setMatrixAt(r * 2 + 1, place(s, outerX));
+      centers.setMatrixAt(r, place(s, 0, 0.008));
+    }
+    side.add(outers, centers);
+    return side;
+  });
+}
+
+/** Both strap styles, built once so switching is instant. */
+export function buildStraps(materials) {
+  return {
+    leather: buildLeatherStrap(),
+    steel: buildSteelBracelet(materials),
+  };
 }
 
 // ---------- Crown ----------
